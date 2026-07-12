@@ -9,12 +9,15 @@ from app.keyboards import (
     categories_kb,
     product_list_kb,
     product_kb,
+    quantity_kb,
     payment_methods_kb,
     payment_info_kb,
     manual_payment_kb,
     admin_review_kb,
 )
 from app.services.nowpayments import NowPayments
+from app.utils.qr import qr_file
+from urllib.parse import urlencode
 
 router = Router()
 
@@ -129,7 +132,7 @@ async def my_orders(call: CallbackQuery):
     else:
         lines = ["📦 <b>My Recent Orders</b>"]
         for o in orders:
-            lines.append(f"#{o.id} | Product {o.product_id} | {o.status} | ${float(o.amount):.2f}")
+            lines.append(f"#{o.id} | Product {o.product_id} | Qty {o.quantity or 1} | {o.status} | ${float(o.amount):.2f}")
         await call.message.answer("\n".join(lines), parse_mode="HTML")
     await call.answer()
 
@@ -150,32 +153,93 @@ async def show_product(call: CallbackQuery):
     await call.answer()
 
 
-@router.callback_query(F.data.startswith("paymenu:"))
-async def payment_menu(call: CallbackQuery):
-    product_id = int(call.data.split(":")[1])
+@router.callback_query(F.data.startswith("quantity:"))
+async def choose_quantity(call: CallbackQuery):
+    _, product_id_raw, quantity_raw = call.data.split(":")
+    product_id = int(product_id_raw)
+    quantity = max(1, min(int(quantity_raw), 13))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
-    await call.message.answer(
+    total = float(product.price) * quantity
+    text = (
+        f"🛒 <b>Select Quantity</b>\n\n"
+        f"📦 {product.name}\n"
+        f"Price each: <b>${float(product.price):.2f}</b>\n"
+        f"Quantity: <b>{quantity}</b>\n"
+        f"Total: <b>${total:.2f}</b>\n\n"
+        f"Maximum: 13"
+    )
+    await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data == "qtynoop")
+async def quantity_noop(call: CallbackQuery):
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("qty:"))
+async def change_quantity(call: CallbackQuery):
+    _, product_id_raw, quantity_raw, delta_raw = call.data.split(":")
+    product_id = int(product_id_raw)
+    quantity = max(1, min(int(quantity_raw) + int(delta_raw), 13))
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, product_id)
+    if not product or not product.active:
+        await call.answer("Product not found.", show_alert=True)
+        return
+    total = float(product.price) * quantity
+    text = (
+        f"🛒 <b>Select Quantity</b>\n\n"
+        f"📦 {product.name}\n"
+        f"Price each: <b>${float(product.price):.2f}</b>\n"
+        f"Quantity: <b>{quantity}</b>\n"
+        f"Total: <b>${total:.2f}</b>\n\n"
+        f"Maximum: 13"
+    )
+    try:
+        await call.message.edit_text(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+    except Exception:
+        await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("paymenu:"))
+async def payment_menu(call: CallbackQuery):
+    parts = call.data.split(":")
+    product_id = int(parts[1])
+    quantity = max(1, min(int(parts[2]) if len(parts) > 2 else 1, 13))
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, product_id)
+    if not product or not product.active:
+        await call.answer("Product not found.", show_alert=True)
+        return
+    total = float(product.price) * quantity
+    text = (
         f"💳 <b>Choose Payment Method</b>\n\n"
         f"📦 Product: <b>{product.name}</b>\n"
-        f"💵 Total: <b>${float(product.price):.2f}</b>\n\n"
-        f"Select the method you prefer 👇",
-        reply_markup=payment_methods_kb(product.id),
-        parse_mode="HTML",
+        f"🔢 Quantity: <b>{quantity}</b>\n"
+        f"💵 Total: <b>${total:.2f}</b>\n\n"
+        f"Select the method you prefer 👇"
     )
+    await call.message.answer(text, reply_markup=payment_methods_kb(product.id, quantity), parse_mode="HTML")
     await call.answer()
 
 
 @router.callback_query(F.data.startswith("manual:"))
 async def manual_payment(call: CallbackQuery):
-    _, product_id_raw, method = call.data.split(":")
+    parts = call.data.split(":")
+    if len(parts) == 4:
+        _, product_id_raw, quantity_raw, method = parts
+        quantity = max(1, min(int(quantity_raw), 13))
+    else:
+        _, product_id_raw, method = parts
+        quantity = 1
     product_id = int(product_id_raw)
 
-    # Validate the selected manual method before creating an order, so disabled
-    # methods do not leave unusable pending orders in the database.
     if method == "wallet" and not settings.WALLET_ADDRESS:
         await call.message.answer("Wallet payment is not configured yet. Please choose another method.")
         await call.answer()
@@ -195,28 +259,51 @@ async def manual_payment(call: CallbackQuery):
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)
             return
-        order = await repo.create_order(session, call.from_user.id, product, settings.CURRENCY, method)
+        order = await repo.create_order(
+            session, call.from_user.id, product, settings.CURRENCY, method, quantity
+        )
 
+    total = float(order.amount)
     label = MANUAL_LABELS[method]
     if method == "wallet":
         destination = f"Wallet address / ID:\n<code>{settings.WALLET_ADDRESS}</code>"
-        amount_line = f"Amount: <b>${float(product.price):.2f}</b>"
+        amount_line = f"Amount: <b>${total:.2f}</b>"
+        qr_data = settings.WALLET_ADDRESS
     elif method == "binance":
         destination = f"Binance Pay ID:\n<code>{settings.BINANCE_PAY_ID}</code>"
-        amount_line = f"Amount: <b>${float(product.price):.2f} USDT</b>"
+        amount_line = f"Amount: <b>${total:.2f} USDT</b>"
+        qr_data = settings.BINANCE_PAY_ID
     else:
-        inr_amount = float(product.price) * float(settings.UPI_INR_PER_USD)
-        destination = f"UPI ID:\n<code>{settings.UPI_ID}</code>\nName: <b>{settings.UPI_NAME}</b>"
+        inr_amount = total * float(settings.UPI_INR_PER_USD)
+        destination = (
+            f"UPI ID:\n<code>{settings.UPI_ID}</code>\n"
+            f"Name: <b>{settings.UPI_NAME}</b>"
+        )
         amount_line = f"Amount: <b>₹{inr_amount:.2f}</b>"
+        qr_data = "upi://pay?" + urlencode(
+            {
+                "pa": settings.UPI_ID,
+                "pn": settings.UPI_NAME,
+                "am": f"{inr_amount:.2f}",
+                "cu": "INR",
+                "tn": f"Order {order.id}",
+            }
+        )
 
-    await call.message.answer(
+    caption = (
         f"{label}\n\n"
         f"🧾 Order ID: <code>{order.id}</code>\n"
         f"📦 Product: <b>{product.name}</b>\n"
+        f"🔢 Quantity: <b>{quantity}</b>\n"
         f"{amount_line}\n\n"
         f"{destination}\n\n"
-        f"After paying, send the screenshot, transaction ID, UTR, or receipt here.\n"
-        f"⚠️ Delivery happens only after admin confirms the money has arrived.",
+        f"Scan the QR or use the details above. After paying, send the screenshot, "
+        f"transaction ID, UTR, or receipt here.\n"
+        f"⚠️ Delivery happens only after admin confirms the money has arrived."
+    )
+    await call.message.answer_photo(
+        qr_file(qr_data, f"order-{order.id}-qr.png"),
+        caption=caption,
         reply_markup=manual_payment_kb(order.id),
         parse_mode="HTML",
     )
@@ -236,25 +323,35 @@ async def proof_help(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("paycoin:"))
 async def paycoin(call: CallbackQuery):
-    _, product_id_raw, pay_currency = call.data.split(":")
+    parts = call.data.split(":")
+    if len(parts) == 4:
+        _, product_id_raw, quantity_raw, pay_currency = parts
+        quantity = max(1, min(int(quantity_raw), 13))
+    else:
+        _, product_id_raw, pay_currency = parts
+        quantity = 1
     product_id = int(product_id_raw)
+
     async with SessionLocal() as session:
         await repo.upsert_user(session, call.from_user)
         product = await repo.get_product(session, product_id)
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)
             return
-        order = await repo.create_order(session, call.from_user.id, product, settings.CURRENCY, pay_currency)
+        order = await repo.create_order(
+            session, call.from_user.id, product, settings.CURRENCY, pay_currency, quantity
+        )
         try:
             payment = await NowPayments().create_payment(
                 order_id=order.id,
-                price_amount=float(product.price),
+                price_amount=float(order.amount),
                 price_currency=settings.CURRENCY,
                 pay_currency=pay_currency,
-                description=product.name,
+                description=f"{product.name} x{quantity}",
             )
         except Exception as exc:
-            await call.message.answer(f"Payment setup error. Please contact support.\n\n{exc}")
+            await repo.set_order_status(session, order, "payment_setup_failed")
+            await call.message.answer(f"⚠️ Payment could not be created.\n\n{exc}")
             await call.answer()
             return
 
@@ -266,18 +363,27 @@ async def paycoin(call: CallbackQuery):
         await repo.set_order_invoice(session, order.id, payment_id, payment_url or "")
 
     label = PAYMENT_LABELS.get(pay_currency, pay_currency.upper())
-    text = (
+    caption = (
         f"{label}\n\n"
         f"🧾 Order ID: <code>{order.id}</code>\n"
         f"📦 Product: <b>{product.name}</b>\n"
-        f"💵 Price: <b>${float(product.price):.2f}</b>\n\n"
+        f"🔢 Quantity: <b>{quantity}</b>\n"
+        f"💵 Total: <b>${float(order.amount):.2f}</b>\n\n"
         f"Send exactly:\n<code>{pay_amount} {pay_currency.upper()}</code>\n\n"
         f"To this address:\n<code>{pay_address}</code>\n"
     )
     if network:
-        text += f"\nNetwork: <b>{network}</b>\n"
-    text += "\n⚠️ Send only the selected coin/network.\n✅ Delivery is automatic after provider confirmation."
-    await call.message.answer(text, reply_markup=payment_info_kb(payment_url), parse_mode="HTML")
+        caption += f"\nNetwork: <b>{network}</b>\n"
+    caption += (
+        "\n⚠️ Send only the selected coin/network.\n"
+        "✅ Delivery is automatic after provider confirmation."
+    )
+    await call.message.answer_photo(
+        qr_file(pay_address, f"order-{order.id}-qr.png"),
+        caption=caption,
+        reply_markup=payment_info_kb(payment_url),
+        parse_mode="HTML",
+    )
     await call.answer()
 
 
@@ -294,6 +400,7 @@ async def _notify_admins(message: Message, order) -> None:
         f"Customer: <b>{message.from_user.full_name}</b> ({username})\n"
         f"Telegram ID: <code>{message.from_user.id}</code>\n"
         f"Product: <b>{order.product.name}</b>\n"
+        f"Quantity: <b>{order.quantity or 1}</b>\n"
         f"Method: <b>{MANUAL_LABELS.get(order.payment_method, order.payment_method)}</b>\n"
         f"Amount: <b>${float(order.amount):.2f}</b>\n\n"
         f"Confirm the money in the real account before approval."

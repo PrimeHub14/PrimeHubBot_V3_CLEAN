@@ -2,9 +2,10 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
-from app.db.session import SessionLocal
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+
 from app.db import repo
+from app.db.session import SessionLocal
 from app.services.delivery import deliver_order
 from app.utils.security import is_admin
 
@@ -21,8 +22,48 @@ class AddProduct(StatesGroup):
     is_file_id = State()
 
 
+class EditProduct(StatesGroup):
+    value = State()
+
+
+EDITABLE_FIELDS = {
+    "name": "Name",
+    "price": "Price",
+    "category": "Category",
+    "description": "Description",
+    "image": "Image",
+    "delivery": "Delivery content",
+}
+
+
 def admin_only(message: Message) -> bool:
     return bool(message.from_user and is_admin(message.from_user.id))
+
+
+def edit_product_kb(product_id: int, active: bool) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📝 Name", callback_data=f"editproduct:{product_id}:name"),
+                InlineKeyboardButton(text="💵 Price", callback_data=f"editproduct:{product_id}:price"),
+            ],
+            [
+                InlineKeyboardButton(text="📂 Category", callback_data=f"editproduct:{product_id}:category"),
+                InlineKeyboardButton(text="📄 Description", callback_data=f"editproduct:{product_id}:description"),
+            ],
+            [
+                InlineKeyboardButton(text="🖼 Image", callback_data=f"editproduct:{product_id}:image"),
+                InlineKeyboardButton(text="📦 Delivery", callback_data=f"editproduct:{product_id}:delivery"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔴 Disable" if active else "🟢 Enable",
+                    callback_data=f"toggleproduct:{product_id}",
+                )
+            ],
+            [InlineKeyboardButton(text="✖ Close", callback_data="editproduct:close")],
+        ]
+    )
 
 
 @router.message(Command("admin"))
@@ -33,6 +74,7 @@ async def admin(message: Message):
         "👤 <b>Admin Panel</b>\n\n"
         "/addproduct - Add product\n"
         "/listproducts - List products\n"
+        "/editproduct PRODUCT_ID - Edit product\n"
         "/delproduct PRODUCT_ID - Disable product\n"
         "/orders - Recent orders\n"
         "/stats - Store stats\n\n"
@@ -128,8 +170,10 @@ async def add_name(message: Message, state: FSMContext):
 async def add_price(message: Message, state: FSMContext):
     try:
         price = float(message.text.strip())
-    except ValueError:
-        await message.answer("Please send a valid number, like 4.50")
+        if price <= 0:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("Please send a valid positive number, like 4.50")
         return
     await state.update_data(price=price)
     await state.set_state(AddProduct.description)
@@ -198,7 +242,137 @@ async def list_products(message: Message):
     for p in products:
         image = "🖼️" if p.image_file_id else "—"
         lines.append(f"#{p.id} | {'✅' if p.active else '❌'} | {image} | {p.category} | {p.name} | ${float(p.price):.2f}")
+    lines.append("\nEdit with: /editproduct PRODUCT_ID")
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("editproduct"))
+async def edit_product(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Usage: /editproduct PRODUCT_ID\nExample: /editproduct 1")
+        return
+
+    product_id = int(parts[1])
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, product_id)
+
+    if not product:
+        await message.answer("Product not found.")
+        return
+
+    await message.answer(
+        f"✏️ <b>Edit Product #{product.id}</b>\n\n"
+        f"Name: {product.name}\n"
+        f"Price: ${float(product.price):.2f}\n"
+        f"Category: {product.category}\n"
+        f"Status: {'Active' if product.active else 'Disabled'}\n\n"
+        "Choose what to edit:",
+        reply_markup=edit_product_kb(product.id, product.active),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "editproduct:close")
+async def close_edit_product(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.clear()
+    await call.message.edit_reply_markup(reply_markup=None)
+    await call.answer("Closed.")
+
+
+@router.callback_query(F.data.startswith("editproduct:"))
+async def choose_edit_field(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    if len(parts) != 3:
+        return
+    product_id = int(parts[1])
+    field = parts[2]
+    if field not in EDITABLE_FIELDS:
+        await call.answer("Unknown field.", show_alert=True)
+        return
+
+    await state.update_data(product_id=product_id, field=field)
+    await state.set_state(EditProduct.value)
+
+    if field == "image":
+        prompt = "Send the new product photo, or type `remove` to delete the current image."
+    elif field == "price":
+        prompt = "Send the new price as a positive number, for example: 10.00"
+    else:
+        prompt = f"Send the new {EDITABLE_FIELDS[field].lower()}."
+
+    await call.message.answer(prompt, parse_mode="Markdown")
+    await call.answer()
+
+
+@router.message(EditProduct.value)
+async def save_edited_value(message: Message, state: FSMContext):
+    if not admin_only(message):
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    product_id = int(data["product_id"])
+    field = data["field"]
+
+    if field == "image":
+        if message.photo:
+            value = message.photo[-1].file_id
+        elif message.text and message.text.strip().lower() == "remove":
+            value = None
+        else:
+            await message.answer("Send a photo, or type `remove`.")
+            return
+    else:
+        if not message.text:
+            await message.answer("Please send text.")
+            return
+        value = message.text.strip()
+        if field == "price":
+            try:
+                value = float(value)
+                if value <= 0:
+                    raise ValueError
+            except ValueError:
+                await message.answer("Please send a valid positive number, for example: 10.00")
+                return
+
+    async with SessionLocal() as session:
+        product = await repo.update_product_field(session, product_id, field, value)
+
+    await state.clear()
+    if not product:
+        await message.answer("Product not found.")
+        return
+
+    display_value = f"${float(product.price):.2f}" if field == "price" else ("updated" if field == "image" else str(value))
+    await message.answer(
+        f"✅ {EDITABLE_FIELDS[field]} updated to: {display_value}\n\n"
+        f"Use /editproduct {product_id} to edit another field."
+    )
+
+
+@router.callback_query(F.data.startswith("toggleproduct:"))
+async def toggle_product(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    product_id = int(call.data.split(":")[1])
+    async with SessionLocal() as session:
+        product = await repo.toggle_product_active(session, product_id)
+    if not product:
+        await call.answer("Product not found.", show_alert=True)
+        return
+    await call.message.edit_reply_markup(reply_markup=edit_product_kb(product.id, product.active))
+    await call.answer("Product enabled." if product.active else "Product disabled.")
 
 
 @router.message(Command("delproduct"))

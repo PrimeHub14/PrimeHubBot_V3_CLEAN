@@ -26,20 +26,33 @@ def product_list_kb(products: list[Product]) -> InlineKeyboardMarkup:
 
 
 def product_kb(product_id: int) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="💳 Choose Payment Method", callback_data=f"paymenu:{product_id}")], [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")]]
+    rows = [[InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")], [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")]]
     if settings.support_link:
         rows.insert(1, [InlineKeyboardButton(text="💬 Ask Support", url=settings.support_link)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def payment_methods_kb(product_id: int) -> InlineKeyboardMarkup:
+def quantity_kb(product_id: int, quantity: int) -> InlineKeyboardMarkup:
+    quantity = max(1, min(quantity, 13))
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Pay with Wallet", callback_data=f"manual:{product_id}:wallet")],
-        [InlineKeyboardButton(text="🟡 Pay with Binance", callback_data=f"manual:{product_id}:binance")],
-        [InlineKeyboardButton(text="⚪ Pay with USDT (BEP20)", callback_data=f"paycoin:{product_id}:usdtbep20")],
-        [InlineKeyboardButton(text="⚪ Pay with USDT (TRC20)", callback_data=f"paycoin:{product_id}:usdttrc20")],
-        [InlineKeyboardButton(text="⚪ Pay with UPI", callback_data=f"manual:{product_id}:upi")],
+        [
+            InlineKeyboardButton(text="➖", callback_data=f"qty:{product_id}:{quantity}:-1"),
+            InlineKeyboardButton(text=f"{quantity}", callback_data="qtynoop"),
+            InlineKeyboardButton(text="➕", callback_data=f"qty:{product_id}:{quantity}:1"),
+        ],
+        [InlineKeyboardButton(text="✅ Continue to Payment", callback_data=f"paymenu:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="⬅️ Back", callback_data=f"product:{product_id}")],
+    ])
+
+
+def payment_methods_kb(product_id: int, quantity: int = 1) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Pay with Wallet", callback_data=f"manual:{product_id}:{quantity}:wallet")],
+        [InlineKeyboardButton(text="🟡 Pay with Binance", callback_data=f"manual:{product_id}:{quantity}:binance")],
+        [InlineKeyboardButton(text="⚪ Pay with USDT (BEP20)", callback_data=f"paycoin:{product_id}:{quantity}:usdtbep20")],
+        [InlineKeyboardButton(text="⚪ Pay with USDT (TRC20)", callback_data=f"paycoin:{product_id}:{quantity}:usdttrc20")],
+        [InlineKeyboardButton(text="⚪ Pay with UPI", callback_data=f"manual:{product_id}:{quantity}:upi")],
+        [InlineKeyboardButton(text="⬅️ Back", callback_data=f"quantity:{product_id}:{quantity}")],
     ])
 
 

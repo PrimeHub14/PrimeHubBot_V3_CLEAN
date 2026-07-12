@@ -49,6 +49,30 @@ async def get_product(session: AsyncSession, product_id: int) -> Product | None:
     return await session.get(Product, product_id)
 
 
+async def update_product_field(session: AsyncSession, product_id: int, field: str, value) -> Product | None:
+    allowed = {"name", "price", "category", "description", "image", "delivery"}
+    if field not in allowed:
+        raise ValueError("Unsupported product field")
+    product = await session.get(Product, product_id)
+    if not product:
+        return None
+    model_field = "image_file_id" if field == "image" else field
+    setattr(product, model_field, value)
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
+async def toggle_product_active(session: AsyncSession, product_id: int) -> Product | None:
+    product = await session.get(Product, product_id)
+    if not product:
+        return None
+    product.active = not product.active
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
 async def deactivate_product(session: AsyncSession, product_id: int) -> bool:
     product = await session.get(Product, product_id)
     if not product:
@@ -59,8 +83,10 @@ async def deactivate_product(session: AsyncSession, product_id: int) -> bool:
 
 
 async def create_order(session: AsyncSession, user_id: int, product: Product, currency: str,
-                       payment_method: str | None = None) -> Order:
-    order = Order(user_id=user_id, product_id=product.id, amount=product.price,
+                       payment_method: str | None = None, quantity: int = 1) -> Order:
+    quantity = max(1, min(int(quantity), 13))
+    order = Order(user_id=user_id, product_id=product.id,
+                  amount=float(product.price) * quantity, quantity=quantity,
                   currency=currency, payment_method=payment_method, status="pending")
     session.add(order)
     await session.commit()
@@ -113,7 +139,7 @@ async def mark_delivered(session: AsyncSession, order: Order) -> None:
     order.status = "delivered"
     product = await session.get(Product, order.product_id)
     if product:
-        product.sold_count = (product.sold_count or 0) + 1
+        product.sold_count = (product.sold_count or 0) + max(1, order.quantity or 1)
     await session.commit()
 
 

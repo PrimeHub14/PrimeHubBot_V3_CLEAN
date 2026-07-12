@@ -16,7 +16,7 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
             product.delivery,
             caption=(
                 f"✅ Payment confirmed!\n\n"
-                f"📦 {product.name}\n\n"
+                f"📦 {product.name}\n🔢 Quantity: {order.quantity or 1}\n\n"
                 f"Thank you for shopping with us. 💛"
             ),
         )
@@ -25,7 +25,7 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
             order.user_id,
             (
                 f"✅ <b>Payment confirmed!</b>\n\n"
-                f"📦 <b>{product.name}</b>\n\n"
+                f"📦 <b>{product.name}</b>\n🔢 Quantity: <b>{order.quantity or 1}</b>\n\n"
                 f"{product.delivery}\n\n"
                 f"━━━━━━━━━━━━━━\n"
                 f"💛 Thank you for choosing us.\n"
