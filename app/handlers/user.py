@@ -142,10 +142,15 @@ async def show_product(call: CallbackQuery):
     product_id = int(call.data.split(":")[1])
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
+        available_stock = await repo.available_stock_count(session, product_id) if product and product.stock_enabled else None
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
     caption = product_caption(product)
+    if product.stock_enabled:
+        caption += f"\n📦 Available stock: <b>{available_stock}</b>"
+        if available_stock <= 0:
+            caption += "\n❌ <b>Currently out of stock</b>"
     if product.image_file_id:
         await call.message.answer_photo(product.image_file_id, caption=caption, reply_markup=product_kb(product.id), parse_mode="HTML")
     else:
@@ -160,9 +165,15 @@ async def choose_quantity(call: CallbackQuery):
     quantity = max(1, min(int(quantity_raw), 13))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
+        available_stock = await repo.available_stock_count(session, product_id) if product and product.stock_enabled else None
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
+    if product.stock_enabled:
+        if available_stock <= 0:
+            await call.answer("This product is out of stock.", show_alert=True)
+            return
+        quantity = min(quantity, available_stock, 13)
     total = float(product.price) * quantity
     text = (
         f"🛒 <b>Select Quantity</b>\n\n"
@@ -188,9 +199,15 @@ async def change_quantity(call: CallbackQuery):
     quantity = max(1, min(int(quantity_raw) + int(delta_raw), 13))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
+        available_stock = await repo.available_stock_count(session, product_id) if product and product.stock_enabled else None
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
+    if product.stock_enabled:
+        if available_stock <= 0:
+            await call.answer("This product is out of stock.", show_alert=True)
+            return
+        quantity = min(quantity, available_stock, 13)
     total = float(product.price) * quantity
     text = (
         f"🛒 <b>Select Quantity</b>\n\n"
@@ -214,9 +231,15 @@ async def payment_menu(call: CallbackQuery):
     quantity = max(1, min(int(parts[2]) if len(parts) > 2 else 1, 13))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
+        available_stock = await repo.available_stock_count(session, product_id) if product and product.stock_enabled else None
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
+    if product.stock_enabled:
+        if available_stock <= 0:
+            await call.answer("This product is out of stock.", show_alert=True)
+            return
+        quantity = min(quantity, available_stock, 13)
     total = float(product.price) * quantity
     text = (
         f"💳 <b>Choose Payment Method</b>\n\n"
@@ -259,9 +282,13 @@ async def manual_payment(call: CallbackQuery):
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)
             return
-        order = await repo.create_order(
-            session, call.from_user.id, product, settings.CURRENCY, method, quantity
-        )
+        try:
+            order = await repo.create_order(
+                session, call.from_user.id, product, settings.CURRENCY, method, quantity
+            )
+        except ValueError as exc:
+            await call.answer(str(exc), show_alert=True)
+            return
 
     total = float(order.amount)
     label = MANUAL_LABELS[method]
@@ -338,9 +365,13 @@ async def paycoin(call: CallbackQuery):
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)
             return
-        order = await repo.create_order(
-            session, call.from_user.id, product, settings.CURRENCY, pay_currency, quantity
-        )
+        try:
+            order = await repo.create_order(
+                session, call.from_user.id, product, settings.CURRENCY, pay_currency, quantity
+            )
+        except ValueError as exc:
+            await call.answer(str(exc), show_alert=True)
+            return
         try:
             payment = await NowPayments().create_payment(
                 order_id=order.id,

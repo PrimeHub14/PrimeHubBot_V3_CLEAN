@@ -1,7 +1,10 @@
-from sqlalchemy import func, select
+from datetime import datetime, timezone
+
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from app.db.models import Order, Product, User
+
+from app.db.models import Order, Product, StockItem, User
 
 MANUAL_METHODS = {"wallet", "binance", "upi"}
 
@@ -50,7 +53,7 @@ async def get_product(session: AsyncSession, product_id: int) -> Product | None:
 
 
 async def update_product_field(session: AsyncSession, product_id: int, field: str, value) -> Product | None:
-    allowed = {"name", "price", "category", "description", "image", "delivery"}
+    allowed = {"name", "price", "category", "description", "image", "delivery", "delivery_note"}
     if field not in allowed:
         raise ValueError("Unsupported product field")
     product = await session.get(Product, product_id)
@@ -82,9 +85,104 @@ async def deactivate_product(session: AsyncSession, product_id: int) -> bool:
     return True
 
 
+async def available_stock_count(session: AsyncSession, product_id: int) -> int:
+    stmt = select(func.count(StockItem.id)).where(
+        StockItem.product_id == product_id,
+        StockItem.status == "available",
+    )
+    return int((await session.execute(stmt)).scalar() or 0)
+
+
+async def add_stock_items(session: AsyncSession, product_id: int, items: list[str], is_file_id: bool = False) -> int:
+    product = await session.get(Product, product_id)
+    if not product:
+        raise ValueError("Product not found")
+    cleaned = [item.strip() for item in items if item and item.strip()]
+    if not cleaned:
+        return 0
+    session.add_all([
+        StockItem(product_id=product_id, content=item, is_file_id=is_file_id, status="available")
+        for item in cleaned
+    ])
+    product.stock_enabled = True
+    await session.commit()
+    return len(cleaned)
+
+
+async def remove_available_stock(session: AsyncSession, product_id: int, quantity: int) -> int:
+    quantity = max(1, int(quantity))
+    stmt = (
+        select(StockItem)
+        .where(StockItem.product_id == product_id, StockItem.status == "available")
+        .order_by(StockItem.id.desc())
+        .limit(quantity)
+        .with_for_update(skip_locked=True)
+    )
+    items = list((await session.execute(stmt)).scalars().all())
+    for item in items:
+        await session.delete(item)
+    await session.commit()
+    return len(items)
+
+
+async def disable_stock_mode(session: AsyncSession, product_id: int) -> bool:
+    product = await session.get(Product, product_id)
+    if not product:
+        return False
+    product.stock_enabled = False
+    await session.commit()
+    return True
+
+
+async def allocate_stock_items(session: AsyncSession, order: Order) -> list[StockItem]:
+    quantity = max(1, int(order.quantity or 1))
+    stmt = (
+        select(StockItem)
+        .where(
+            StockItem.product_id == order.product_id,
+            StockItem.status == "available",
+        )
+        .order_by(StockItem.id.asc())
+        .limit(quantity)
+        .with_for_update(skip_locked=True)
+    )
+    items = list((await session.execute(stmt)).scalars().all())
+    if len(items) != quantity:
+        await session.rollback()
+        return []
+    for item in items:
+        item.status = "reserved"
+        item.reserved_order_id = order.id
+    await session.commit()
+    return items
+
+
+async def complete_stock_items(session: AsyncSession, order_id: int) -> None:
+    stmt = select(StockItem).where(StockItem.reserved_order_id == order_id, StockItem.status == "reserved")
+    items = list((await session.execute(stmt)).scalars().all())
+    now = datetime.now(timezone.utc)
+    for item in items:
+        item.status = "delivered"
+        item.delivered_at = now
+    await session.commit()
+
+
+async def release_stock_items(session: AsyncSession, order_id: int) -> None:
+    stmt = select(StockItem).where(StockItem.reserved_order_id == order_id, StockItem.status == "reserved")
+    items = list((await session.execute(stmt)).scalars().all())
+    for item in items:
+        item.status = "available"
+        item.reserved_order_id = None
+    await session.commit()
+
+
 async def create_order(session: AsyncSession, user_id: int, product: Product, currency: str,
                        payment_method: str | None = None, quantity: int = 1) -> Order:
     quantity = max(1, min(int(quantity), 13))
+    if product.stock_enabled:
+        available = await available_stock_count(session, product.id)
+        if available < quantity:
+            raise ValueError(f"Only {available} item(s) left in stock")
     order = Order(user_id=user_id, product_id=product.id,
                   amount=float(product.price) * quantity, quantity=quantity,
                   currency=currency, payment_method=payment_method, status="pending")

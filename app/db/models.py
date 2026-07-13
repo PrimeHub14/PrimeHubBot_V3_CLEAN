@@ -25,10 +25,12 @@ class Product(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     delivery: Mapped[str] = mapped_column(Text, nullable=False)
+    delivery_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
     is_file_id: Mapped[bool] = mapped_column(Boolean, default=False)
     image_file_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sold_count: Mapped[int] = mapped_column(Integer, default=0)
+    stock_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -52,3 +54,16 @@ class Order(Base):
 
     user: Mapped[User] = relationship()
     product: Mapped[Product] = relationship()
+
+
+class StockItem(Base):
+    __tablename__ = "stock_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    is_file_id: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(30), default="available", nullable=False, index=True)
+    reserved_order_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
