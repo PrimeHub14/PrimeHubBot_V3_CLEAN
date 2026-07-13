@@ -7,7 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import settings
 from app.db.session import init_db
-from app.handlers import admin, user
+from app.handlers import admin, wallet, user
 from app.webhook import create_app
 
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +19,7 @@ async def start_bot() -> None:
     bot = Bot(settings.BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(admin.router)
+    dp.include_router(wallet.router)
     dp.include_router(user.router)
 
     app = create_app(bot)

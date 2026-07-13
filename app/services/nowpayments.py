@@ -16,7 +16,7 @@ class NowPayments:
     def normalize_currency(self, value: str) -> str:
         return self.CURRENCY_ALIASES.get(value.lower(), value.lower())
 
-    async def create_payment(self, order_id: int, price_amount: float, price_currency: str,
+    async def create_payment(self, order_id: int | str, price_amount: float, price_currency: str,
                              pay_currency: str, description: str) -> dict[str, Any]:
         if not self.api_key:
             raise RuntimeError("NOWPAYMENTS_API_KEY is not configured")

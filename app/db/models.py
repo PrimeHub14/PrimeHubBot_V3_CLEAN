@@ -13,7 +13,25 @@ class User(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    wallet_balance: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WalletTopUp(Base):
+    __tablename__ = "wallet_topups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    method: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False, index=True)
+    provider_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    payment_proof_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    payment_proof_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[User] = relationship()
 
 
 class Product(Base):

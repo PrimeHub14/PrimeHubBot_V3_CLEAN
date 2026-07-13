@@ -256,3 +256,62 @@ async def stats(session: AsyncSession) -> tuple[int, int, float]:
     orders = (await session.execute(select(func.count(Order.id)))).scalar() or 0
     revenue = (await session.execute(select(func.coalesce(func.sum(Order.amount), 0)).where(Order.status == "delivered"))).scalar() or 0
     return int(users), int(orders), float(revenue)
+
+
+# Internal wallet and top-up helpers
+async def wallet_balance(session: AsyncSession, user_id: int) -> float:
+    user = await session.get(User, user_id)
+    return float(user.wallet_balance or 0) if user else 0.0
+
+
+async def create_wallet_topup(session: AsyncSession, user_id: int, amount: float, method: str):
+    from app.db.models import WalletTopUp
+    topup = WalletTopUp(user_id=user_id, amount=amount, method=method, status="pending")
+    session.add(topup)
+    await session.commit()
+    await session.refresh(topup)
+    return topup
+
+
+async def get_wallet_topup(session: AsyncSession, topup_id: int):
+    from app.db.models import WalletTopUp
+    return await session.get(WalletTopUp, topup_id)
+
+
+async def set_wallet_topup_invoice(session: AsyncSession, topup_id: int, payment_id: str) -> None:
+    from app.db.models import WalletTopUp
+    topup = await session.get(WalletTopUp, topup_id)
+    if topup:
+        topup.provider_payment_id = payment_id
+        topup.status = "waiting_payment"
+        await session.commit()
+
+
+async def latest_wallet_topup_waiting_for_proof(session: AsyncSession, user_id: int):
+    from app.db.models import WalletTopUp
+    stmt = select(WalletTopUp).where(
+        WalletTopUp.user_id == user_id,
+        WalletTopUp.method.in_(["binance", "upi"]),
+        WalletTopUp.status.in_(["pending", "awaiting_proof"]),
+    ).order_by(WalletTopUp.id.desc()).limit(1)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def save_wallet_topup_proof(session: AsyncSession, topup, proof_type: str, proof_value: str) -> None:
+    topup.payment_proof_type = proof_type
+    topup.payment_proof_value = proof_value
+    topup.status = "proof_submitted"
+    await session.commit()
+
+
+async def credit_wallet_topup(session: AsyncSession, topup) -> bool:
+    if topup.credited:
+        return False
+    user = await session.get(User, topup.user_id)
+    if not user:
+        return False
+    user.wallet_balance = float(user.wallet_balance or 0) + float(topup.amount)
+    topup.credited = True
+    topup.status = "credited"
+    await session.commit()
+    return True

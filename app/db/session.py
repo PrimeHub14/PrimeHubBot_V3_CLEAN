@@ -12,6 +12,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
         # Safe migrations for existing Railway PostgreSQL databases.
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC(12,2) DEFAULT 0 NOT NULL"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR(255) DEFAULT 'Digital Products'"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS image_file_id TEXT"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS sold_count INTEGER DEFAULT 0"))
