@@ -93,6 +93,7 @@ def wallet_amount_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="$5", callback_data="wamount:5"), InlineKeyboardButton(text="$10", callback_data="wamount:10")],
         [InlineKeyboardButton(text="$20", callback_data="wamount:20"), InlineKeyboardButton(text="$50", callback_data="wamount:50")],
+        [InlineKeyboardButton(text="✏️ Custom Amount", callback_data="wamount:custom")],
         [InlineKeyboardButton(text="⬅️ Back", callback_data="wallet:home")],
     ])
 

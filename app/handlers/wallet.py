@@ -1,6 +1,8 @@
 from urllib.parse import urlencode
 
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from app.config import settings
@@ -22,6 +24,10 @@ from app.utils.security import is_admin
 router = Router()
 
 
+class WalletTopupState(StatesGroup):
+    waiting_custom_amount = State()
+
+
 @router.callback_query(F.data == "wallet:home")
 async def wallet_home(call: CallbackQuery):
     async with SessionLocal() as session:
@@ -40,9 +46,48 @@ async def wallet_add(call: CallbackQuery):
     await call.answer()
 
 
+@router.callback_query(F.data == "wamount:custom")
+async def wallet_custom_amount_prompt(call: CallbackQuery, state: FSMContext):
+    await state.set_state(WalletTopupState.waiting_custom_amount)
+    await call.message.answer(
+        "✏️ Enter the amount you want to add in USD.\n\n"
+        "Example: <code>7.50</code>\n"
+        "Minimum: <b>$1.00</b>",
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@router.message(WalletTopupState.waiting_custom_amount)
+async def wallet_custom_amount_message(message: Message, state: FSMContext):
+    raw = (message.text or "").strip().replace("$", "").replace(",", "")
+    try:
+        amount = round(float(raw), 2)
+    except ValueError:
+        await message.answer("Please enter a valid number, for example <code>7.50</code>.", parse_mode="HTML")
+        return
+
+    if amount < 1:
+        await message.answer("The minimum wallet top-up is <b>$1.00</b>. Please enter a higher amount.", parse_mode="HTML")
+        return
+    if amount > 10000:
+        await message.answer("The maximum single top-up is <b>$10,000.00</b>.", parse_mode="HTML")
+        return
+
+    await state.clear()
+    await message.answer(
+        f"Add <b>${amount:.2f}</b> to your wallet. Choose a payment method:",
+        reply_markup=wallet_topup_methods_kb(amount),
+        parse_mode="HTML",
+    )
+
+
 @router.callback_query(F.data.startswith("wamount:"))
 async def wallet_amount(call: CallbackQuery):
-    amount = float(call.data.split(":")[1])
+    amount_raw = call.data.split(":", 1)[1]
+    if amount_raw == "custom":
+        return
+    amount = float(amount_raw)
     await call.message.answer(
         f"Add <b>${amount:.2f}</b> to your wallet. Choose a payment method:",
         reply_markup=wallet_topup_methods_kb(amount), parse_mode="HTML"
