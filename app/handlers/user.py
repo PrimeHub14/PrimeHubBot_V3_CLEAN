@@ -342,7 +342,7 @@ async def manual_payment(call: CallbackQuery):
         f"Scan the QR or use the details above. After paying, send the screenshot, "
         f"transaction ID, UTR, or receipt here.\n"
         f"⚠️ Delivery happens only after admin confirms the money has arrived.\n\n"
-        f"⏳ <b>Complete payment within 10 minutes.</b> If unpaid, this order expires and stock is released."
+        f"⏳ <b>Complete payment within 10 minutes.</b> If unpaid, this order expires. Inventory is assigned only after payment is confirmed."
     )
     sent = await call.message.answer_photo(
         qr_file(qr_data, f"order-{order.id}-qr.png"),
@@ -391,7 +391,7 @@ async def cancel_order_callback(call: CallbackQuery, state: FSMContext):
     except Exception:
         pass
     await call.message.answer(
-        f"❌ Order <code>#{order.id}</code> cancelled. Reserved stock was released.",
+        f"❌ Order <code>#{order.id}</code> cancelled. No inventory was deducted.",
         parse_mode="HTML",
     )
     await call.answer("Order cancelled")

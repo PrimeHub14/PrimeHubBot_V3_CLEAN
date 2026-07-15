@@ -257,18 +257,23 @@ async def wallet_pay(call: CallbackQuery):
         except ValueError as exc:
             await call.answer(str(exc), show_alert=True); return
         if not await debit_wallet(session, call.from_user.id, total):
-            await repo.release_stock_items(session, order.id)
             await call.answer("Insufficient wallet balance", show_alert=True); return
         order.status = "paid"
         await session.commit()
         try:
             order = await repo.get_order_with_product(session, order.id)
             await deliver_order(call.bot, session, order)
-        except Exception:
+        except Exception as exc:
             await credit_wallet(session, call.from_user.id, total)
-            order.status = "delivery_failed_refunded"
+            order.status = "out_of_stock_refunded" if "Not enough stock" in str(exc) else "delivery_failed_refunded"
             await session.commit()
-            raise
+            new_balance = await repo.wallet_balance(session, call.from_user.id)
+            await call.message.answer(
+                f"⚠️ The live stock was no longer available when payment completed. "
+                f"Your ${total:.2f} was returned automatically.\nWallet balance: ${new_balance:.2f}"
+            )
+            await call.answer("Payment refunded", show_alert=True)
+            return
         new_balance = await repo.wallet_balance(session, call.from_user.id)
     await call.message.answer(f"✅ Paid from Prime Hub Wallet.\nRemaining balance: <b>${new_balance:.2f}</b>", parse_mode="HTML")
     await call.answer("Payment successful")

@@ -193,7 +193,7 @@ async def release_stock_items(session: AsyncSession, order_id: int) -> None:
 
 
 async def cancel_open_orders_for_user(session: AsyncSession, user_id: int) -> list[int]:
-    """Cancel stale unpaid orders for this user and release their reserved stock."""
+    """Cancel the user's older unpaid orders. Inventory is never held at checkout."""
     stmt = (
         select(Order)
         .where(
@@ -209,19 +209,12 @@ async def cancel_open_orders_for_user(session: AsyncSession, user_id: int) -> li
         order.status = "cancelled"
         order.expires_at = None
         cancelled_ids.append(order.id)
-        stock_stmt = select(StockItem).where(
-            StockItem.reserved_order_id == order.id,
-            StockItem.status == "reserved",
-        )
-        items = list((await session.execute(stock_stmt)).scalars().all())
-        for item in items:
-            item.status = "available"
-            item.reserved_order_id = None
     await session.commit()
     return cancelled_ids
 
 
 async def cancel_order(session: AsyncSession, order_id: int, user_id: int | None = None) -> Order | None:
+    """Cancel an unpaid order. No stock release is needed because stock is not held."""
     stmt = select(Order).where(Order.id == order_id).with_for_update()
     order = (await session.execute(stmt)).scalar_one_or_none()
     if not order or (user_id is not None and order.user_id != user_id):
@@ -230,25 +223,24 @@ async def cancel_order(session: AsyncSession, order_id: int, user_id: int | None
         return order
     order.status = "cancelled"
     order.expires_at = None
-    stock_stmt = select(StockItem).where(
-        StockItem.reserved_order_id == order.id,
-        StockItem.status == "reserved",
-    )
-    items = list((await session.execute(stock_stmt)).scalars().all())
-    for item in items:
-        item.status = "available"
-        item.reserved_order_id = None
     await session.commit()
     return order
 
 
 async def create_order(session: AsyncSession, user_id: int, product: Product, currency: str,
                        payment_method: str | None = None, quantity: int = 1) -> Order:
-    """Create an order and atomically reserve one unique stock row per quantity."""
+    """Create an unpaid order without reserving inventory.
+
+    Live inventory is claimed atomically only after payment is confirmed.
+    """
     await cancel_open_orders_for_user(session, user_id)
     quantity = max(1, min(int(quantity), 13))
     if not product.stock_enabled:
         raise ValueError("This product is not configured for stock-controlled delivery")
+
+    available = await available_stock_count(session, product.id)
+    if available < quantity:
+        raise ValueError(f"Only {available} item(s) are currently available. Please choose a lower quantity.")
 
     order = Order(
         user_id=user_id,
@@ -261,29 +253,9 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
     )
     session.add(order)
-    await session.flush()
-
-    stmt = (
-        select(StockItem)
-        .where(StockItem.product_id == product.id, StockItem.status == "available")
-        .order_by(StockItem.id.asc())
-        .limit(quantity)
-        .with_for_update(skip_locked=True)
-    )
-    items = list((await session.execute(stmt)).scalars().all())
-    if len(items) != quantity:
-        await session.rollback()
-        available = await available_stock_count(session, product.id)
-        raise ValueError(f"Only {available} item(s) are available. Please choose a lower quantity.")
-
-    for item in items:
-        item.status = "reserved"
-        item.reserved_order_id = order.id
-
     await session.commit()
     await session.refresh(order)
     return order
-
 
 
 async def set_order_payment_message(session: AsyncSession, order_id: int, chat_id: int, message_id: int, base_text: str) -> None:
@@ -296,6 +268,10 @@ async def set_order_payment_message(session: AsyncSession, order_id: int, chat_i
 
 
 async def expire_unpaid_orders(session: AsyncSession) -> list[Order]:
+    """Expire unpaid orders after the full payment window.
+
+    Inventory is unaffected because checkout never reserves stock.
+    """
     now = datetime.now(timezone.utc)
     stmt = select(Order).where(
         Order.expires_at.is_not(None),
@@ -306,23 +282,17 @@ async def expire_unpaid_orders(session: AsyncSession) -> list[Order]:
     orders = list((await session.execute(stmt)).scalars().all())
     for order in orders:
         order.status = "expired"
-        stock_stmt = select(StockItem).where(StockItem.reserved_order_id == order.id, StockItem.status == "reserved")
-        items = list((await session.execute(stock_stmt)).scalars().all())
-        for item in items:
-            item.status = "available"
-            item.reserved_order_id = None
     await session.commit()
     return orders
 
 
 async def all_product_stock(session: AsyncSession) -> list[tuple[Product, int, int]]:
+    """Return live available inventory. Third value remains 0 for compatibility."""
     products = await list_products(session, only_active=False)
     result = []
     for product in products:
         available = await available_stock_count(session, product.id)
-        reserved_stmt = select(func.count(StockItem.id)).where(StockItem.product_id == product.id, StockItem.status == "reserved")
-        reserved = int((await session.execute(reserved_stmt)).scalar() or 0)
-        result.append((product, available, reserved))
+        result.append((product, available, 0))
     return result
 
 

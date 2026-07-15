@@ -121,9 +121,25 @@ async def approve_payment(call: CallbackQuery):
         try:
             await deliver_order(call.bot, session, order)
         except Exception as exc:
-            await repo.set_order_status(session, order, "delivery_failed")
-            await call.message.answer(f"⚠️ Payment approved, but delivery failed for order #{order.id}:\n{exc}")
-            await call.answer("Delivery failed. Check the message.", show_alert=True)
+            message = str(exc)
+            if "Not enough stock" in message:
+                await repo.set_order_status(session, order, "paid_out_of_stock")
+                try:
+                    await call.bot.send_message(
+                        order.user_id,
+                        f"⚠️ Payment was confirmed for order #{order.id}, but the live stock sold out before confirmation. "
+                        "Please contact support for a replacement or refund."
+                    )
+                except Exception:
+                    pass
+                await call.message.answer(
+                    f"⚠️ Order #{order.id} is paid but live stock is unavailable. Arrange a replacement or refund."
+                )
+                await call.answer("Paid, but out of stock.", show_alert=True)
+            else:
+                await repo.set_order_status(session, order, "delivery_failed")
+                await call.message.answer(f"⚠️ Payment approved, but delivery failed for order #{order.id}:\n{exc}")
+                await call.answer("Delivery failed. Check the message.", show_alert=True)
             return
 
     await call.message.edit_reply_markup(reply_markup=None)
@@ -150,8 +166,6 @@ async def reject_payment(call: CallbackQuery):
             await call.answer("Delivered orders cannot be rejected.", show_alert=True)
             return
         await repo.set_order_status(session, order, "rejected")
-        await repo.release_stock_items(session, order.id)
-        await repo.release_stock_items(session, order.id)
         try:
             await call.bot.send_message(
                 order.user_id,
@@ -565,7 +579,7 @@ async def stock_status(message: Message):
             for product, available, reserved in rows:
                 mode = getattr(product, "delivery_mode", "instant")
                 status = "✅" if available > 0 else "❌"
-                lines.append(f"{status} #{product.id} {product.name} | ${float(product.price):.2f} | Available: {available} | Held: {reserved} | {mode}")
+                lines.append(f"{status} #{product.id} {product.name} | ${float(product.price):.2f} | Available: {available} | {mode}")
             await message.answer("\n".join(lines), parse_mode="HTML")
             return
         if len(parts) != 2 or not parts[1].isdigit():
