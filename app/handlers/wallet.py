@@ -238,6 +238,7 @@ async def wallet_pay(call: CallbackQuery):
         except ValueError as exc:
             await call.answer(str(exc), show_alert=True); return
         if not await debit_wallet(session, call.from_user.id, total):
+            await repo.release_stock_items(session, order.id)
             await call.answer("Insufficient wallet balance", show_alert=True); return
         order.status = "paid"
         await session.commit()

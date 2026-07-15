@@ -142,6 +142,7 @@ async def reject_payment(call: CallbackQuery):
             await call.answer("Delivered orders cannot be rejected.", show_alert=True)
             return
         await repo.set_order_status(session, order, "rejected")
+        await repo.release_stock_items(session, order.id)
         try:
             await call.bot.send_message(
                 order.user_id,
@@ -239,7 +240,7 @@ async def add_is_file(message: Message, state: FSMContext):
             image_file_id=data.get("image_file_id"),
         )
     await state.clear()
-    await message.answer(f"✅ Product added. ID: {product.id}")
+    await message.answer(f"✅ Product added. ID: {product.id}\n\n⚠️ Stock is 0, so customers cannot order yet. Add stock with /addstock {product.id}")
 
 
 @router.message(Command("listproducts"))

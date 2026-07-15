@@ -22,20 +22,35 @@ def categories_kb(categories: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def product_list_kb(products: list[Product]) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text=f"🔥 {p.name} — ${float(p.price):.2f}", callback_data=f"product:{p.id}")] for p in products]
+def product_list_kb(products: list[Product], stock_counts: dict[int, int] | None = None) -> InlineKeyboardMarkup:
+    stock_counts = stock_counts or {}
+    rows = []
+    for p in products:
+        stock = int(stock_counts.get(p.id, 0))
+        if stock > 0:
+            label = f"✅ {p.name} — ${float(p.price):.2f} | Stock: {stock}"
+        else:
+            label = f"❌ {p.name} — OUT OF STOCK"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"product:{p.id}")])
     rows += [[InlineKeyboardButton(text="📂 Categories", callback_data="shop")], [InlineKeyboardButton(text="🏠 Home", callback_data="home")]]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def product_kb(product_id: int) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")],
-        [InlineKeyboardButton(text="🔔 Restock Alerts", callback_data=f"stocknotify:{product_id}")],
-        [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
-    ]
+def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarkup:
+    if available_stock > 0:
+        rows = [
+            [InlineKeyboardButton(text=f"🛒 Choose Quantity (Stock: {available_stock})", callback_data=f"quantity:{product_id}:1")],
+            [InlineKeyboardButton(text="🔔 Restock Alerts", callback_data=f"stocknotify:{product_id}")],
+            [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
+        ]
+    else:
+        rows = [
+            [InlineKeyboardButton(text="❌ Out of Stock", callback_data="outofstock")],
+            [InlineKeyboardButton(text="🔔 Notify Me When Restocked", callback_data=f"stocknotify:{product_id}")],
+            [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
+        ]
     if settings.support_link:
-        rows.insert(1, [InlineKeyboardButton(text="💬 Ask Support", url=settings.support_link)])
+        rows.insert(-1, [InlineKeyboardButton(text="💬 Ask Support", url=settings.support_link)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

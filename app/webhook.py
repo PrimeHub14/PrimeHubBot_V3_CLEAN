@@ -10,6 +10,7 @@ from app.services.nowpayments import verify_ipn
 from app.services.delivery import deliver_order
 
 PAID_STATUSES = {"finished", "confirmed", "sending"}
+FAILED_STATUSES = {"failed", "expired", "refunded"}
 
 
 def create_app(bot: Bot) -> web.Application:
@@ -35,6 +36,8 @@ def create_app(bot: Bot) -> web.Application:
                 await session.commit()
                 if status in PAID_STATUSES and not order.delivered:
                     await deliver_order(bot, session, order)
+                elif status in FAILED_STATUSES and not order.delivered:
+                    await repo.release_stock_items(session, order.id)
                 return web.Response(text="OK")
 
             topup = (await session.execute(select(WalletTopUp).where(WalletTopUp.provider_payment_id == payment_id))).scalar_one_or_none()

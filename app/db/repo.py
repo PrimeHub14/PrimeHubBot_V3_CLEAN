@@ -135,7 +135,21 @@ async def disable_stock_mode(session: AsyncSession, product_id: int) -> bool:
 
 
 async def allocate_stock_items(session: AsyncSession, order: Order) -> list[StockItem]:
+    """Return stock already reserved for this order; reserve only as a fallback."""
     quantity = max(1, int(order.quantity or 1))
+    reserved_stmt = (
+        select(StockItem)
+        .where(
+            StockItem.product_id == order.product_id,
+            StockItem.reserved_order_id == order.id,
+            StockItem.status == "reserved",
+        )
+        .order_by(StockItem.id.asc())
+    )
+    reserved = list((await session.execute(reserved_stmt)).scalars().all())
+    if len(reserved) == quantity:
+        return reserved
+
     stmt = (
         select(StockItem)
         .where(
@@ -178,15 +192,40 @@ async def release_stock_items(session: AsyncSession, order_id: int) -> None:
 
 async def create_order(session: AsyncSession, user_id: int, product: Product, currency: str,
                        payment_method: str | None = None, quantity: int = 1) -> Order:
+    """Create an order and atomically reserve one unique stock row per quantity."""
     quantity = max(1, min(int(quantity), 13))
-    if product.stock_enabled:
-        available = await available_stock_count(session, product.id)
-        if available < quantity:
-            raise ValueError(f"Only {available} item(s) left in stock")
-    order = Order(user_id=user_id, product_id=product.id,
-                  amount=float(product.price) * quantity, quantity=quantity,
-                  currency=currency, payment_method=payment_method, status="pending")
+    if not product.stock_enabled:
+        raise ValueError("This product is not configured for stock-controlled delivery")
+
+    order = Order(
+        user_id=user_id,
+        product_id=product.id,
+        amount=float(product.price) * quantity,
+        quantity=quantity,
+        currency=currency,
+        payment_method=payment_method,
+        status="pending",
+    )
     session.add(order)
+    await session.flush()
+
+    stmt = (
+        select(StockItem)
+        .where(StockItem.product_id == product.id, StockItem.status == "available")
+        .order_by(StockItem.id.asc())
+        .limit(quantity)
+        .with_for_update(skip_locked=True)
+    )
+    items = list((await session.execute(stmt)).scalars().all())
+    if len(items) != quantity:
+        await session.rollback()
+        available = await available_stock_count(session, product.id)
+        raise ValueError(f"Only {available} item(s) are available. Please choose a lower quantity.")
+
+    for item in items:
+        item.status = "reserved"
+        item.reserved_order_id = order.id
+
     await session.commit()
     await session.refresh(order)
     return order

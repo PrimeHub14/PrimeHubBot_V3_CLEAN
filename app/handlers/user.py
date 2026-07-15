@@ -94,10 +94,11 @@ async def shop(call: CallbackQuery):
 async def products_cmd(message: Message):
     async with SessionLocal() as session:
         products = await repo.list_products(session)
+        stock_counts = {p.id: await repo.available_stock_count(session, p.id) for p in products}
     if not products:
         await message.answer("No products are available yet.")
         return
-    await message.answer("🔥 <b>Available Products</b>", reply_markup=product_list_kb(products), parse_mode="HTML")
+    await message.answer("🔥 <b>Available Products</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("cat:"))
@@ -110,10 +111,11 @@ async def category_products(call: CallbackQuery):
         else:
             products = await repo.list_products_by_category(session, category)
             title = f"📂 {category}"
+        stock_counts = {p.id: await repo.available_stock_count(session, p.id) for p in products}
     if not products:
         await call.message.answer("No products in this category yet.")
     else:
-        await call.message.answer(f"<b>{title}</b>", reply_markup=product_list_kb(products), parse_mode="HTML")
+        await call.message.answer(f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
     await call.answer()
 
 
@@ -142,20 +144,24 @@ async def show_product(call: CallbackQuery):
     product_id = int(call.data.split(":")[1])
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product and product.stock_enabled else None
+        available_stock = await repo.available_stock_count(session, product_id) if product else 0
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
     caption = product_caption(product)
-    if product.stock_enabled:
-        caption += f"\n📦 Available stock: <b>{available_stock}</b>"
-        if available_stock <= 0:
-            caption += "\n❌ <b>Currently out of stock</b>"
+    caption += f"\n📦 Available stock: <b>{available_stock}</b>"
+    if available_stock <= 0:
+        caption += "\n❌ <b>Currently out of stock — purchasing is disabled</b>"
     if product.image_file_id:
-        await call.message.answer_photo(product.image_file_id, caption=caption, reply_markup=product_kb(product.id), parse_mode="HTML")
+        await call.message.answer_photo(product.image_file_id, caption=caption, reply_markup=product_kb(product.id, available_stock), parse_mode="HTML")
     else:
-        await call.message.answer(caption, reply_markup=product_kb(product.id), parse_mode="HTML")
+        await call.message.answer(caption, reply_markup=product_kb(product.id, available_stock), parse_mode="HTML")
     await call.answer()
+
+
+@router.callback_query(F.data == "outofstock")
+async def out_of_stock(call: CallbackQuery):
+    await call.answer("This product is currently out of stock. Use Restock Alerts to be notified.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("quantity:"))
@@ -165,15 +171,16 @@ async def choose_quantity(call: CallbackQuery):
     quantity = max(1, min(int(quantity_raw), 13))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product and product.stock_enabled else None
+        available_stock = await repo.available_stock_count(session, product_id) if product else 0
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
-    if product.stock_enabled:
-        if available_stock <= 0:
-            await call.answer("This product is out of stock.", show_alert=True)
-            return
-        quantity = min(quantity, available_stock, 13)
+    if available_stock <= 0:
+        await call.answer("This product is out of stock.", show_alert=True)
+        return
+    if quantity > available_stock:
+        await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
+        return
     total = float(product.price) * quantity
     text = (
         f"🛒 <b>Select Quantity</b>\n\n"
@@ -181,7 +188,7 @@ async def choose_quantity(call: CallbackQuery):
         f"Price each: <b>${float(product.price):.2f}</b>\n"
         f"Quantity: <b>{quantity}</b>\n"
         f"Total: <b>${total:.2f}</b>\n\n"
-        f"Maximum: 13"
+        f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{min(13, available_stock)}</b>"
     )
     await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
     await call.answer()
@@ -199,15 +206,16 @@ async def change_quantity(call: CallbackQuery):
     quantity = max(1, min(int(quantity_raw) + int(delta_raw), 13))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product and product.stock_enabled else None
+        available_stock = await repo.available_stock_count(session, product_id) if product else 0
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
-    if product.stock_enabled:
-        if available_stock <= 0:
-            await call.answer("This product is out of stock.", show_alert=True)
-            return
-        quantity = min(quantity, available_stock, 13)
+    if available_stock <= 0:
+        await call.answer("This product is out of stock.", show_alert=True)
+        return
+    if quantity > available_stock:
+        await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
+        return
     total = float(product.price) * quantity
     text = (
         f"🛒 <b>Select Quantity</b>\n\n"
@@ -215,7 +223,7 @@ async def change_quantity(call: CallbackQuery):
         f"Price each: <b>${float(product.price):.2f}</b>\n"
         f"Quantity: <b>{quantity}</b>\n"
         f"Total: <b>${total:.2f}</b>\n\n"
-        f"Maximum: 13"
+        f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{min(13, available_stock)}</b>"
     )
     try:
         await call.message.edit_text(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
@@ -231,15 +239,16 @@ async def payment_menu(call: CallbackQuery):
     quantity = max(1, min(int(parts[2]) if len(parts) > 2 else 1, 13))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product and product.stock_enabled else None
+        available_stock = await repo.available_stock_count(session, product_id) if product else 0
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
-    if product.stock_enabled:
-        if available_stock <= 0:
-            await call.answer("This product is out of stock.", show_alert=True)
-            return
-        quantity = min(quantity, available_stock, 13)
+    if available_stock <= 0:
+        await call.answer("This product is out of stock.", show_alert=True)
+        return
+    if quantity > available_stock:
+        await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
+        return
     total = float(product.price) * quantity
     text = (
         f"💳 <b>Choose Payment Method</b>\n\n"
@@ -382,6 +391,7 @@ async def paycoin(call: CallbackQuery):
             )
         except Exception as exc:
             await repo.set_order_status(session, order, "payment_setup_failed")
+            await repo.release_stock_items(session, order.id)
             await call.message.answer(f"⚠️ Payment could not be created.\n\n{exc}")
             await call.answer()
             return

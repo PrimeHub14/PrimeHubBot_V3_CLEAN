@@ -81,6 +81,7 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
             await release_stock_items(session, order.id)
             raise
     elif product.is_file_id:
+        raise RuntimeError("This product has no unique stock items. Add stock before delivery.")
         await bot.send_document(
             order.user_id,
             product.delivery,
@@ -97,6 +98,7 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
                 parse_mode="HTML",
             )
     else:
+        raise RuntimeError("This product has no unique stock items. Add stock before delivery.")
         await bot.send_message(
             order.user_id,
             (
