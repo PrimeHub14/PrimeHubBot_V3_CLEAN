@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     REVIEWS_TEXT: str = "⭐ 4.9/5 Customer Rating\n✅ Instant delivery\n🛡 Friendly replacement support\n💬 Fast support"
     WELCOME_IMAGE_FILE_ID: str = ""
 
+    # Community updates and optional AI assistant
+    UPDATE_CHAT_IDS: str = ""
+    COMMUNITY_LINK: str = ""
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-5-mini"
+
     # Manual payment destinations
     WALLET_ADDRESS: str = ""
     BINANCE_PAY_ID: str = ""
@@ -43,6 +49,28 @@ class Settings(BaseSettings):
     @property
     def webhook_url(self) -> str:
         return self.PUBLIC_URL.rstrip("/") + self.WEBHOOK_PATH
+
+    @property
+    def update_chat_ids(self) -> list[int | str]:
+        values: list[int | str] = []
+        for raw in self.UPDATE_CHAT_IDS.split(","):
+            value = raw.strip()
+            if not value:
+                continue
+            if value.lstrip("-").isdigit():
+                values.append(int(value))
+            else:
+                values.append(value if value.startswith("@") else f"@{value}")
+        return values
+
+    @property
+    def community_link(self) -> str | None:
+        value = self.COMMUNITY_LINK.strip()
+        if not value:
+            return None
+        if value.startswith("http://") or value.startswith("https://"):
+            return value
+        return f"https://t.me/{value.lstrip('@')}"
 
     @property
     def support_link(self) -> str | None:

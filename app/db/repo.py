@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Order, Product, StockItem, User
+from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription
 
 MANUAL_METHODS = {"wallet", "binance", "upi"}
 
@@ -315,3 +315,90 @@ async def credit_wallet_topup(session: AsyncSession, topup) -> bool:
     topup.status = "credited"
     await session.commit()
     return True
+
+
+# Support tickets
+async def create_support_ticket(
+    session: AsyncSession,
+    user_id: int,
+    issue_type: str,
+    message: str,
+    order_id: int | None = None,
+    attachment_file_id: str | None = None,
+) -> SupportTicket:
+    ticket = SupportTicket(
+        user_id=user_id,
+        order_id=order_id,
+        issue_type=issue_type,
+        message=message,
+        attachment_file_id=attachment_file_id,
+        status="open",
+    )
+    session.add(ticket)
+    await session.commit()
+    await session.refresh(ticket)
+    return ticket
+
+
+async def get_support_ticket(session: AsyncSession, ticket_id: int) -> SupportTicket | None:
+    return await session.get(SupportTicket, ticket_id)
+
+
+async def user_support_tickets(session: AsyncSession, user_id: int, limit: int = 10) -> list[SupportTicket]:
+    stmt = (
+        select(SupportTicket)
+        .where(SupportTicket.user_id == user_id)
+        .order_by(SupportTicket.id.desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def reply_support_ticket(session: AsyncSession, ticket: SupportTicket, reply: str) -> None:
+    ticket.admin_reply = reply
+    ticket.status = "answered"
+    await session.commit()
+
+
+async def close_support_ticket(session: AsyncSession, ticket: SupportTicket) -> None:
+    ticket.status = "closed"
+    ticket.closed_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
+# Restock subscriptions
+async def subscribe_restock(session: AsyncSession, user_id: int, product_id: int) -> bool:
+    stmt = select(StockSubscription).where(
+        StockSubscription.user_id == user_id,
+        StockSubscription.product_id == product_id,
+    )
+    subscription = (await session.execute(stmt)).scalar_one_or_none()
+    if subscription:
+        changed = not subscription.active
+        subscription.active = True
+        await session.commit()
+        return changed
+    session.add(StockSubscription(user_id=user_id, product_id=product_id, active=True))
+    await session.commit()
+    return True
+
+
+async def unsubscribe_restock(session: AsyncSession, user_id: int, product_id: int) -> bool:
+    stmt = select(StockSubscription).where(
+        StockSubscription.user_id == user_id,
+        StockSubscription.product_id == product_id,
+    )
+    subscription = (await session.execute(stmt)).scalar_one_or_none()
+    if not subscription or not subscription.active:
+        return False
+    subscription.active = False
+    await session.commit()
+    return True
+
+
+async def restock_subscribers(session: AsyncSession, product_id: int) -> list[int]:
+    stmt = select(StockSubscription.user_id).where(
+        StockSubscription.product_id == product_id,
+        StockSubscription.active.is_(True),
+    )
+    return [int(row[0]) for row in (await session.execute(stmt)).all()]

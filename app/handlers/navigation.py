@@ -131,20 +131,3 @@ async def profile_command(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(Command("help"))
-async def help_command(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    rows = [[InlineKeyboardButton(text="🏠 Home", callback_data="home")]]
-    if settings.support_link:
-        rows.insert(0, [InlineKeyboardButton(text="💬 Contact Support", url=settings.support_link)])
-    await message.answer(
-        "🛟 <b>Prime Hub Help</b>\n\n"
-        "Choose the issue you need help with:\n"
-        "• Payment or wallet top-up\n"
-        "• Product not received\n"
-        "• Login or redemption problem\n"
-        "• Replacement or warranty request\n\n"
-        "Please include your order ID when contacting support.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-        parse_mode="HTML",
-    )

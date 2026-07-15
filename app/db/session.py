@@ -22,3 +22,7 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1 NOT NULL"))
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_proof_type VARCHAR(30)"))
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_proof_value TEXT"))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_subscription_user_product "
+            "ON stock_subscriptions (user_id, product_id)"
+        ))

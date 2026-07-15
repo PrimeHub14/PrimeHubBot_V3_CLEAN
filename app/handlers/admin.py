@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.db import repo
 from app.db.session import SessionLocal
 from app.services.delivery import deliver_order
+from app.services.announcements import notify_restock
 from app.utils.security import is_admin
 
 router = Router()
@@ -87,7 +88,9 @@ async def admin(message: Message):
         "/removestock PRODUCT_ID QTY - Reduce stock\n"
         "/disablestock PRODUCT_ID - Use reusable delivery\n"
         "/editnote PRODUCT_ID - Set customer instructions\n"
-        "/viewnote PRODUCT_ID - View customer instructions\n\n"
+        "/viewnote PRODUCT_ID - View customer instructions\n"
+        "/announce MESSAGE - Post to Prime Hub update chats\n"
+        "/replyticket ID MESSAGE - Reply to a ticket\n\n"
         "Manual payment proofs arrive here with Approve & Deliver / Reject buttons.",
         parse_mode="HTML",
     )
@@ -524,8 +527,17 @@ async def receive_stock_items(message: Message, state: FSMContext):
     async with SessionLocal() as session:
         added = await repo.add_stock_items(session, product_id, items)
         total = await repo.available_stock_count(session, product_id)
+        product = await repo.get_product(session, product_id)
     await state.clear()
     await message.answer(f"✅ Added {added} stock item(s).\n📦 Available stock now: {total}")
+    if product and added > 0:
+        users_notified, chats_notified = await notify_restock(
+            message.bot, product, added, total
+        )
+        await message.answer(
+            f"🔔 Restock notifications sent to {users_notified} subscriber(s) "
+            f"and {chats_notified} update chat(s)."
+        )
 
 
 @router.message(Command("stock"))

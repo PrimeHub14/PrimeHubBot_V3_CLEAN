@@ -9,6 +9,8 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="💰 My Wallet", callback_data="wallet:home")],
         [InlineKeyboardButton(text="📦 My Orders", callback_data="myorders"), InlineKeyboardButton(text="⭐ Reviews", callback_data="reviews")],
     ]
+    if settings.community_link:
+        rows.append([InlineKeyboardButton(text="📢 Prime Hub Updates", url=settings.community_link)])
     if settings.support_link:
         rows.append([InlineKeyboardButton(text="💬 Support", url=settings.support_link)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -27,7 +29,11 @@ def product_list_kb(products: list[Product]) -> InlineKeyboardMarkup:
 
 
 def product_kb(product_id: int) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")], [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")]]
+    rows = [
+        [InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")],
+        [InlineKeyboardButton(text="🔔 Restock Alerts", callback_data=f"stocknotify:{product_id}")],
+        [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
+    ]
     if settings.support_link:
         rows.insert(1, [InlineKeyboardButton(text="💬 Ask Support", url=settings.support_link)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
