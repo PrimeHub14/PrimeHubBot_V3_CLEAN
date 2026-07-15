@@ -8,6 +8,8 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🛍 Shop", callback_data="shop")],
         [InlineKeyboardButton(text="💰 My Wallet", callback_data="wallet:home")],
         [InlineKeyboardButton(text="📦 My Orders", callback_data="myorders"), InlineKeyboardButton(text="⭐ Reviews", callback_data="reviews")],
+        [InlineKeyboardButton(text="🎁 Referral", callback_data="growth:referral"), InlineKeyboardButton(text="🏆 Loyalty", callback_data="growth:loyalty")],
+        [InlineKeyboardButton(text="🧠 Recommendations", callback_data="growth:recommend"), InlineKeyboardButton(text="🛟 Help", callback_data="help:home")],
     ]
     if settings.community_link:
         rows.append([InlineKeyboardButton(text="📢 Prime Hub Updates", url=settings.community_link)])
@@ -83,8 +85,7 @@ def payment_info_kb(payment_url: str | None = None) -> InlineKeyboardMarkup:
     if payment_url:
         rows.append([InlineKeyboardButton(text="Open backup payment page", url=payment_url)])
     rows.append([InlineKeyboardButton(text="🔄 Payment checks automatically", callback_data="paid:info")])
-    if settings.support_link:
-        rows.append([InlineKeyboardButton(text="💬 Payment Help", url=settings.support_link)])
+    rows.append([InlineKeyboardButton(text="🛟 Payment Help", callback_data="help:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -93,8 +94,7 @@ def manual_payment_kb(order_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📤 I have paid — send proof below", callback_data=f"proofhelp:{order_id}")],
         [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"cancelorder:{order_id}")],
     ]
-    if settings.support_link:
-        rows.append([InlineKeyboardButton(text="💬 Payment Help", url=settings.support_link)])
+    rows.append([InlineKeyboardButton(text="🛟 Payment Help", callback_data="help:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

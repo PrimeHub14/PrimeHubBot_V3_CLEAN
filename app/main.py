@@ -8,7 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import settings
 from app.db.session import init_db
-from app.handlers import admin, navigation, wallet, user, support, assistant, community
+from app.handlers import admin, navigation, wallet, user, support, assistant, community, growth
 from app.webhook import create_app
 from app.services.order_expiry import order_expiry_worker
 
@@ -27,6 +27,7 @@ async def start_bot() -> None:
     dp.include_router(support.router)
     dp.include_router(assistant.router)
     dp.include_router(community.router)
+    dp.include_router(growth.router)
     dp.include_router(admin.router)
     dp.include_router(wallet.router)
     dp.include_router(user.router)

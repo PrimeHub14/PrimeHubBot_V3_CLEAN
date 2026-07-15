@@ -13,6 +13,14 @@ async def init_db() -> None:
 
         # Safe migrations for existing Railway PostgreSQL databases.
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC(12,2) DEFAULT 0 NOT NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS language VARCHAR(10) DEFAULT 'en' NOT NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(32)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_id BIGINT"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS loyalty_points INTEGER DEFAULT 0 NOT NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS vip_tier VARCHAR(20) DEFAULT 'Bronze' NOT NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS active_coupon_code VARCHAR(50)"))
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_referral_code ON users (referral_code) WHERE referral_code IS NOT NULL"))
+
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR(255) DEFAULT 'Digital Products'"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS image_file_id TEXT"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS sold_count INTEGER DEFAULT 0"))

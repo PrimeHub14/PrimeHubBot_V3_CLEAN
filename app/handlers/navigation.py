@@ -30,6 +30,9 @@ async def _register_user(message: Message) -> None:
         return
     async with SessionLocal() as session:
         await repo.upsert_user(session, message.from_user)
+        text = message.text or ''
+        if text.startswith('/start ref_'):
+            await repo.set_referrer_from_code(session, message.from_user.id, text.split('ref_', 1)[1].strip())
 
 
 async def _show_home(message: Message, state: FSMContext) -> None:
@@ -131,3 +134,40 @@ async def profile_command(message: Message, state: FSMContext) -> None:
     )
 
 
+
+
+@router.callback_query(F.data == "growth:referral")
+async def growth_referral_callback(call: CallbackQuery):
+    async with SessionLocal() as session:
+        await repo.upsert_user(session, call.from_user)
+        code = await repo.ensure_referral_code(session, call.from_user.id)
+        invited, earned = await repo.referral_stats(session, call.from_user.id)
+    me = await call.bot.get_me()
+    link = f"https://t.me/{me.username}?start=ref_{code}"
+    await call.message.answer(
+        f"🎁 <b>Referral Program</b>\n\n<code>{link}</code>\n\nInvited: <b>{invited}</b>\nEarned: <b>${earned:.2f}</b>",
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "growth:loyalty")
+async def growth_loyalty_callback(call: CallbackQuery):
+    async with SessionLocal() as session:
+        user = await repo.upsert_user(session, call.from_user)
+    await call.message.answer(
+        f"🏆 <b>Loyalty</b>\n\nPoints: <b>{int(user.loyalty_points or 0)}</b>\nVIP: <b>{user.vip_tier or 'Bronze'}</b>",
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "growth:recommend")
+async def growth_recommend_callback(call: CallbackQuery):
+    async with SessionLocal() as session:
+        products = await repo.recommendations(session, call.from_user.id)
+    rows = [[InlineKeyboardButton(text=f"{p.name} · ${float(p.price):.2f}", callback_data=f"product:{p.id}")] for p in products]
+    if not rows:
+        await call.answer("No recommendations yet.", show_alert=True); return
+    await call.message.answer("🧠 <b>Recommended for You</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows), parse_mode="HTML")
+    await call.answer()

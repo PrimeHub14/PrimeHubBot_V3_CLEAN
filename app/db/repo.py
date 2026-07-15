@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import uuid
 
-from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription
+from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription, Coupon, CouponRedemption, ReferralReward, LoyaltyTransaction, FlashSale
 
 MANUAL_METHODS = {"wallet", "binance", "upi"}
 
@@ -245,7 +245,7 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
     order = Order(
         user_id=user_id,
         product_id=product.id,
-        amount=float(product.price) * quantity,
+        amount=(await effective_price(session, user_id, product))[0] * quantity,
         quantity=quantity,
         currency=currency,
         payment_method=payment_method,
@@ -533,3 +533,179 @@ async def restock_subscribers(session: AsyncSession, product_id: int) -> list[in
         StockSubscription.active.is_(True),
     )
     return [int(row[0]) for row in (await session.execute(stmt)).all()]
+
+
+# ---------- Prime Hub V4 growth helpers ----------
+async def ensure_referral_code(session: AsyncSession, user_id: int) -> str:
+    user = await session.get(User, user_id)
+    if not user:
+        raise ValueError("User not found")
+    if not user.referral_code:
+        user.referral_code = f"PH{user.id:x}".upper()
+        await session.commit()
+    return user.referral_code
+
+
+async def set_referrer_from_code(session: AsyncSession, user_id: int, code: str) -> bool:
+    user = await session.get(User, user_id)
+    if not user or user.referrer_id or not code:
+        return False
+    stmt = select(User).where(User.referral_code == code.upper())
+    referrer = (await session.execute(stmt)).scalar_one_or_none()
+    if not referrer or referrer.id == user_id:
+        return False
+    user.referrer_id = referrer.id
+    await session.commit()
+    return True
+
+
+async def referral_stats(session: AsyncSession, user_id: int) -> tuple[int, float]:
+    invited = (await session.execute(select(func.count(User.id)).where(User.referrer_id == user_id))).scalar() or 0
+    earned = (await session.execute(
+        select(func.coalesce(func.sum(ReferralReward.amount), 0)).where(ReferralReward.referrer_id == user_id)
+    )).scalar() or 0
+    return int(invited), float(earned)
+
+
+async def create_coupon(session: AsyncSession, code: str, percent_off: int, max_uses: int, expires_at):
+    existing = (await session.execute(select(Coupon).where(Coupon.code == code.upper()))).scalar_one_or_none()
+    if existing:
+        existing.percent_off = percent_off
+        existing.max_uses = max_uses
+        existing.expires_at = expires_at
+        existing.active = True
+        coupon = existing
+    else:
+        coupon = Coupon(code=code.upper(), percent_off=percent_off, max_uses=max_uses, expires_at=expires_at)
+        session.add(coupon)
+    await session.commit()
+    await session.refresh(coupon)
+    return coupon
+
+
+async def activate_coupon_for_user(session: AsyncSession, user_id: int, code: str) -> Coupon:
+    now = datetime.now(timezone.utc)
+    coupon = (await session.execute(select(Coupon).where(Coupon.code == code.upper(), Coupon.active.is_(True)))).scalar_one_or_none()
+    if not coupon:
+        raise ValueError("Coupon not found or inactive")
+    if coupon.expires_at and coupon.expires_at <= now:
+        raise ValueError("Coupon has expired")
+    if coupon.max_uses > 0 and coupon.uses >= coupon.max_uses:
+        raise ValueError("Coupon usage limit reached")
+    user = await session.get(User, user_id)
+    user.active_coupon_code = coupon.code
+    await session.commit()
+    return coupon
+
+
+async def active_flash_sale(session: AsyncSession, product_id: int) -> FlashSale | None:
+    now = datetime.now(timezone.utc)
+    stmt = select(FlashSale).where(
+        FlashSale.product_id == product_id,
+        FlashSale.active.is_(True),
+        FlashSale.starts_at <= now,
+        FlashSale.ends_at > now,
+    ).order_by(FlashSale.id.desc()).limit(1)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def effective_price(session: AsyncSession, user_id: int, product: Product) -> tuple[float, str | None]:
+    price = float(product.price)
+    label = None
+    sale = await active_flash_sale(session, product.id)
+    if sale:
+        price = min(price, float(sale.sale_price))
+        label = "flash sale"
+    user = await session.get(User, user_id)
+    if user and user.active_coupon_code:
+        try:
+            coupon = (await session.execute(
+                select(Coupon).where(Coupon.code == user.active_coupon_code, Coupon.active.is_(True))
+            )).scalar_one_or_none()
+            now = datetime.now(timezone.utc)
+            if coupon and (not coupon.expires_at or coupon.expires_at > now) and (coupon.max_uses == 0 or coupon.uses < coupon.max_uses):
+                price = round(price * (100 - coupon.percent_off) / 100, 2)
+                label = f"coupon {coupon.code}"
+        except Exception:
+            pass
+    return max(price, 0.01), label
+
+
+async def create_flash_sale(session: AsyncSession, product_id: int, sale_price: float, ends_at):
+    await session.execute(update(FlashSale).where(FlashSale.product_id == product_id, FlashSale.active.is_(True)).values(active=False))
+    sale = FlashSale(product_id=product_id, sale_price=sale_price, ends_at=ends_at, active=True)
+    session.add(sale)
+    await session.commit()
+    await session.refresh(sale)
+    return sale
+
+
+async def recommendations(session: AsyncSession, user_id: int, limit: int = 5) -> list[Product]:
+    recent = (await session.execute(
+        select(Order).where(Order.user_id == user_id, Order.status == "delivered").order_by(Order.id.desc()).limit(5)
+    )).scalars().all()
+    categories = []
+    for order in recent:
+        product = await session.get(Product, order.product_id)
+        if product and product.category not in categories:
+            categories.append(product.category)
+    stmt = select(Product).where(Product.active.is_(True))
+    if categories:
+        stmt = stmt.where(Product.category.in_(categories))
+    stmt = stmt.order_by(Product.sold_count.desc(), Product.id.desc()).limit(limit)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def growth_dashboard(session: AsyncSession) -> dict:
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    total_users = (await session.execute(select(func.count(User.id)))).scalar() or 0
+    total_orders = (await session.execute(select(func.count(Order.id)))).scalar() or 0
+    delivered = (await session.execute(select(func.count(Order.id)).where(Order.status == "delivered"))).scalar() or 0
+    pending = (await session.execute(select(func.count(Order.id)).where(Order.status.in_(["pending","awaiting_proof","proof_submitted"])))).scalar() or 0
+    revenue = (await session.execute(select(func.coalesce(func.sum(Order.amount),0)).where(Order.status == "delivered"))).scalar() or 0
+    today_revenue = (await session.execute(select(func.coalesce(func.sum(Order.amount),0)).where(Order.status == "delivered", Order.created_at >= day_start))).scalar() or 0
+    open_tickets = (await session.execute(select(func.count(SupportTicket.id)).where(SupportTicket.status != "closed"))).scalar() or 0
+    active_coupons = (await session.execute(select(func.count(Coupon.id)).where(Coupon.active.is_(True)))).scalar() or 0
+    return {
+        "users": int(total_users), "orders": int(total_orders), "delivered": int(delivered),
+        "pending": int(pending), "revenue": float(revenue), "today_revenue": float(today_revenue),
+        "open_tickets": int(open_tickets), "active_coupons": int(active_coupons),
+    }
+
+
+async def award_growth_rewards(session: AsyncSession, order: Order) -> None:
+    """Idempotently award loyalty points, coupon use and referral commission."""
+    user = await session.get(User, order.user_id)
+    if not user:
+        return
+    existing_points = (await session.execute(
+        select(LoyaltyTransaction).where(LoyaltyTransaction.order_id == order.id)
+    )).scalar_one_or_none()
+    if not existing_points:
+        points = max(1, int(float(order.amount)))
+        user.loyalty_points = int(user.loyalty_points or 0) + points
+        session.add(LoyaltyTransaction(user_id=user.id, order_id=order.id, points=points, reason="Delivered order"))
+        total = int(user.loyalty_points or 0)
+        user.vip_tier = "Diamond" if total >= 1000 else "Gold" if total >= 500 else "Silver" if total >= 100 else "Bronze"
+
+    if user.active_coupon_code:
+        coupon = (await session.execute(select(Coupon).where(Coupon.code == user.active_coupon_code))).scalar_one_or_none()
+        redemption = (await session.execute(select(CouponRedemption).where(CouponRedemption.order_id == order.id))).scalar_one_or_none()
+        if coupon and not redemption:
+            coupon.uses += 1
+            session.add(CouponRedemption(coupon_id=coupon.id, user_id=user.id, order_id=order.id))
+        user.active_coupon_code = None
+
+    if user.referrer_id:
+        existing_reward = (await session.execute(select(ReferralReward).where(ReferralReward.order_id == order.id))).scalar_one_or_none()
+        if not existing_reward:
+            commission = round(float(order.amount) * 0.03, 2)
+            if commission > 0:
+                referrer = await session.get(User, user.referrer_id)
+                if referrer:
+                    referrer.wallet_balance = float(referrer.wallet_balance or 0) + commission
+                    session.add(ReferralReward(
+                        referrer_id=referrer.id, referred_user_id=user.id, order_id=order.id, amount=commission
+                    ))
+    await session.commit()
