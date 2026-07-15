@@ -1,5 +1,7 @@
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from app.config import settings
 from app.db.session import SessionLocal
@@ -20,6 +22,10 @@ from app.utils.qr import qr_file
 from urllib.parse import urlencode
 
 router = Router()
+
+
+class OrderProofState(StatesGroup):
+    waiting_proof = State()
 
 PAYMENT_LABELS = {
     "usdttrc20": "⚪ USDT (TRC20)",
@@ -350,14 +356,45 @@ async def manual_payment(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("proofhelp:"))
-async def proof_help(call: CallbackQuery):
-    order_id = call.data.split(":")[1]
+async def proof_help(call: CallbackQuery, state: FSMContext):
+    order_id = int(call.data.split(":")[1])
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+    if not order or order.user_id != call.from_user.id or order.status not in {"pending", "awaiting_proof"}:
+        await call.answer("This order is no longer awaiting payment proof.", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(order_proof_id=order_id)
+    await state.set_state(OrderProofState.waiting_proof)
     await call.answer()
     await call.message.answer(
         f"📤 Send payment proof for order <code>{order_id}</code> now.\n\n"
         "Accepted: screenshot, receipt document, UTR, or transaction ID.",
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data.startswith("cancelorder:"))
+async def cancel_order_callback(call: CallbackQuery, state: FSMContext):
+    order_id = int(call.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        order = await repo.cancel_order(session, order_id, call.from_user.id)
+    if not order:
+        await call.answer("Order not found.", show_alert=True)
+        return
+    if order.status != "cancelled":
+        await call.answer(f"Order is already {order.status}.", show_alert=True)
+        return
+    await state.clear()
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(
+        f"❌ Order <code>#{order.id}</code> cancelled. Reserved stock was released.",
+        parse_mode="HTML",
+    )
+    await call.answer("Order cancelled")
 
 
 @router.callback_query(F.data.startswith("paycoin:"))
@@ -462,15 +499,17 @@ async def _notify_admins(message: Message, order) -> None:
             continue
 
 
-@router.message(F.photo | F.document | (F.text & ~F.text.startswith("/")))
-async def payment_proof(message: Message):
+@router.message(OrderProofState.waiting_proof, F.photo | F.document | (F.text & ~F.text.startswith("/")))
+async def payment_proof(message: Message, state: FSMContext):
     if not message.from_user:
         return
+    data = await state.get_data()
+    order_id = int(data.get("order_proof_id") or 0)
     async with SessionLocal() as session:
-        order = await repo.latest_manual_order_waiting_for_proof(session, message.from_user.id)
-        if not order:
-            if message.document:
-                await message.answer(f"📎 File received. Telegram file_id:\n<code>{message.document.file_id}</code>", parse_mode="HTML")
+        order = await repo.get_order_with_product(session, order_id)
+        if not order or order.user_id != message.from_user.id or order.status not in {"pending", "awaiting_proof"}:
+            await state.clear()
+            await message.answer("This order is no longer awaiting proof. Please create a new order.")
             return
 
         if message.photo:
@@ -482,6 +521,7 @@ async def payment_proof(message: Message):
 
         await repo.save_payment_proof(session, order, proof_type, proof_value)
 
+    await state.clear()
     await _notify_admins(message, order)
     await message.answer(
         f"✅ Payment proof received for order <code>{order.id}</code>.\n\n"

@@ -26,6 +26,7 @@ router = Router()
 
 class WalletTopupState(StatesGroup):
     waiting_custom_amount = State()
+    waiting_proof = State()
 
 
 @router.callback_query(F.data == "wallet:home")
@@ -154,18 +155,31 @@ async def wallet_topup(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("wproof:"))
-async def wallet_proof_prompt(call: CallbackQuery):
-    await call.message.answer("Send the payment screenshot, receipt, transaction ID, or UTR now.")
+async def wallet_proof_prompt(call: CallbackQuery, state: FSMContext):
+    topup_id = int(call.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        topup = await repo.get_wallet_topup(session, topup_id)
+    if not topup or topup.user_id != call.from_user.id or topup.status not in {"pending", "awaiting_proof"}:
+        await call.answer("This top-up is no longer awaiting proof.", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(wallet_topup_id=topup_id)
+    await state.set_state(WalletTopupState.waiting_proof)
+    await call.message.answer(f"📤 Send proof for wallet top-up <code>#{topup_id}</code> now.\n\nAccepted: screenshot, receipt, transaction ID, or UTR.", parse_mode="HTML")
     await call.answer()
 
 
-@router.message(F.photo | F.document | F.text)
-async def wallet_proof_message(message: Message):
+@router.message(WalletTopupState.waiting_proof, F.photo | F.document | (F.text & ~F.text.startswith("/")))
+async def wallet_proof_message(message: Message, state: FSMContext):
     if not message.from_user:
         return
+    data = await state.get_data()
+    topup_id = int(data.get("wallet_topup_id") or 0)
     async with SessionLocal() as session:
-        topup = await repo.latest_wallet_topup_waiting_for_proof(session, message.from_user.id)
-        if not topup:
+        topup = await repo.get_wallet_topup(session, topup_id)
+        if not topup or topup.user_id != message.from_user.id or topup.status not in {"pending", "awaiting_proof"}:
+            await state.clear()
+            await message.answer("This wallet top-up is no longer awaiting proof.")
             return
         if message.photo:
             proof_type, proof_value = "photo", message.photo[-1].file_id
@@ -175,6 +189,7 @@ async def wallet_proof_message(message: Message):
             proof_type, proof_value = "text", message.text or ""
         await repo.save_wallet_topup_proof(session, topup, proof_type, proof_value)
 
+    await state.clear()
     summary = (f"💰 <b>Wallet top-up proof</b>\n\nTop-up ID: <code>{topup.id}</code>\n"
                f"User: <code>{message.from_user.id}</code>\nAmount: <b>${float(topup.amount):.2f}</b>\nMethod: {topup.method}")
     for admin_id in settings.admin_ids_set:
@@ -196,11 +211,15 @@ async def wallet_approve(call: CallbackQuery):
         topup = await repo.get_wallet_topup(session, topup_id)
         if not topup or topup.status != "proof_submitted":
             await call.answer("Top-up is not waiting for approval", show_alert=True); return
-        credited = await repo.credit_wallet_topup(session, topup)
+        credited, new_balance = await repo.credit_wallet_topup(session, topup)
     if credited:
-        await call.bot.send_message(topup.user_id, f"✅ Wallet credited with <b>${float(topup.amount):.2f}</b>.", parse_mode="HTML")
+        await call.bot.send_message(
+            topup.user_id,
+            f"✅ Wallet top-up approved.\nAdded: <b>${float(topup.amount):.2f}</b>\nNew balance: <b>${new_balance:.2f}</b>",
+            parse_mode="HTML",
+        )
     await call.message.edit_reply_markup(reply_markup=None)
-    await call.answer("Wallet credited")
+    await call.answer("Wallet credited" if credited else "Already credited")
 
 
 @router.callback_query(F.data.startswith("wreject:"))

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -191,9 +192,60 @@ async def release_stock_items(session: AsyncSession, order_id: int) -> None:
     await session.commit()
 
 
+async def cancel_open_orders_for_user(session: AsyncSession, user_id: int) -> list[int]:
+    """Cancel stale unpaid orders for this user and release their reserved stock."""
+    stmt = (
+        select(Order)
+        .where(
+            Order.user_id == user_id,
+            Order.delivered.is_(False),
+            Order.status.in_(["pending", "awaiting_proof", "waiting_payment"]),
+        )
+        .with_for_update(skip_locked=True)
+    )
+    orders = list((await session.execute(stmt)).scalars().all())
+    cancelled_ids: list[int] = []
+    for order in orders:
+        order.status = "cancelled"
+        order.expires_at = None
+        cancelled_ids.append(order.id)
+        stock_stmt = select(StockItem).where(
+            StockItem.reserved_order_id == order.id,
+            StockItem.status == "reserved",
+        )
+        items = list((await session.execute(stock_stmt)).scalars().all())
+        for item in items:
+            item.status = "available"
+            item.reserved_order_id = None
+    await session.commit()
+    return cancelled_ids
+
+
+async def cancel_order(session: AsyncSession, order_id: int, user_id: int | None = None) -> Order | None:
+    stmt = select(Order).where(Order.id == order_id).with_for_update()
+    order = (await session.execute(stmt)).scalar_one_or_none()
+    if not order or (user_id is not None and order.user_id != user_id):
+        return None
+    if order.status not in {"pending", "awaiting_proof", "waiting_payment"}:
+        return order
+    order.status = "cancelled"
+    order.expires_at = None
+    stock_stmt = select(StockItem).where(
+        StockItem.reserved_order_id == order.id,
+        StockItem.status == "reserved",
+    )
+    items = list((await session.execute(stock_stmt)).scalars().all())
+    for item in items:
+        item.status = "available"
+        item.reserved_order_id = None
+    await session.commit()
+    return order
+
+
 async def create_order(session: AsyncSession, user_id: int, product: Product, currency: str,
                        payment_method: str | None = None, quantity: int = 1) -> Order:
     """Create an order and atomically reserve one unique stock row per quantity."""
+    await cancel_open_orders_for_user(session, user_id)
     quantity = max(1, min(int(quantity), 13))
     if not product.stock_enabled:
         raise ValueError("This product is not configured for stock-controlled delivery")
@@ -324,6 +376,7 @@ async def save_payment_proof(session: AsyncSession, order: Order, proof_type: st
     order.payment_proof_type = proof_type
     order.payment_proof_value = proof_value
     order.status = "proof_submitted"
+    order.expires_at = None
     await session.commit()
 
 
@@ -404,17 +457,25 @@ async def save_wallet_topup_proof(session: AsyncSession, topup, proof_type: str,
     await session.commit()
 
 
-async def credit_wallet_topup(session: AsyncSession, topup) -> bool:
-    if topup.credited:
-        return False
-    user = await session.get(User, topup.user_id)
+async def credit_wallet_topup(session: AsyncSession, topup) -> tuple[bool, Decimal]:
+    """Credit a wallet top-up exactly once, even if approval is clicked twice."""
+    from app.db.models import WalletTopUp
+    stmt = select(WalletTopUp).where(WalletTopUp.id == topup.id).with_for_update()
+    locked = (await session.execute(stmt)).scalar_one_or_none()
+    if not locked or locked.credited:
+        user = await session.get(User, topup.user_id)
+        return False, Decimal(str(user.wallet_balance or 0)) if user else Decimal("0.00")
+    user_stmt = select(User).where(User.id == locked.user_id).with_for_update()
+    user = (await session.execute(user_stmt)).scalar_one_or_none()
     if not user:
-        return False
-    user.wallet_balance = float(user.wallet_balance or 0) + float(topup.amount)
-    topup.credited = True
-    topup.status = "credited"
+        return False, Decimal("0.00")
+    amount = Decimal(str(locked.amount)).quantize(Decimal("0.01"))
+    current = Decimal(str(user.wallet_balance or 0)).quantize(Decimal("0.01"))
+    user.wallet_balance = current + amount
+    locked.credited = True
+    locked.status = "credited"
     await session.commit()
-    return True
+    return True, Decimal(str(user.wallet_balance)).quantize(Decimal("0.01"))
 
 
 # Support tickets

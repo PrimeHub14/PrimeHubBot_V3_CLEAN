@@ -14,7 +14,7 @@ async def order_expiry_worker(bot: Bot) -> None:
                 expired = await repo.expire_unpaid_orders(session)
             for order in expired:
                 try:
-                    await bot.send_message(order.user_id, f"⌛ Order #{order.id} expired because payment was not completed within 10 minutes. Stock was released. Please order again.")
+                    await bot.send_message(order.user_id, f"⌛ Order #{order.id} expired after its full 10-minute payment window. Reserved stock was released. Please create a new order.")
                     if order.payment_message_chat_id and order.payment_message_id and order.payment_message_text:
                         text = order.payment_message_text + "\n\n⌛ <b>EXPIRED — please create a new order.</b>"
                         try:

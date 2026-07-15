@@ -39,7 +39,7 @@ def product_list_kb(products: list[Product], stock_counts: dict[int, int] | None
 def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarkup:
     if available_stock > 0:
         rows = [
-            [InlineKeyboardButton(text=f"🛒 Choose Quantity (Stock: {available_stock})", callback_data=f"quantity:{product_id}:1")],
+            [InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")],
             [InlineKeyboardButton(text="🔔 Restock Alerts", callback_data=f"stocknotify:{product_id}")],
             [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
         ]
@@ -89,7 +89,10 @@ def payment_info_kb(payment_url: str | None = None) -> InlineKeyboardMarkup:
 
 
 def manual_payment_kb(order_id: int) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="📤 I have paid — send proof below", callback_data=f"proofhelp:{order_id}")]]
+    rows = [
+        [InlineKeyboardButton(text="📤 I have paid — send proof below", callback_data=f"proofhelp:{order_id}")],
+        [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"cancelorder:{order_id}")],
+    ]
     if settings.support_link:
         rows.append([InlineKeyboardButton(text="💬 Payment Help", url=settings.support_link)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
