@@ -30,7 +30,7 @@ def product_list_kb(products: list[Product], stock_counts: dict[int, int] | None
         if stock > 0:
             label = f"✅ {p.name} — ${float(p.price):.2f} | Stock: {stock}"
         else:
-            label = f"❌ {p.name} — OUT OF STOCK"
+            label = f"❌ {p.name} — ${float(p.price):.2f} | OUT OF STOCK"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"product:{p.id}")])
     rows += [[InlineKeyboardButton(text="📂 Categories", callback_data="shop")], [InlineKeyboardButton(text="🏠 Home", callback_data="home")]]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -139,3 +139,7 @@ def admin_wallet_review_kb(topup_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✅ Approve Wallet Top-up", callback_data=f"wapprove:{topup_id}")],
         [InlineKeyboardButton(text="❌ Reject", callback_data=f"wreject:{topup_id}")],
     ])
+
+
+def manual_delivery_admin_kb(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📦 Send Manual Delivery", callback_data=f"manualdeliver:{order_id}")]])

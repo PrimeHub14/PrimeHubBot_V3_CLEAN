@@ -49,6 +49,7 @@ class Product(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sold_count: Mapped[int] = mapped_column(Integer, default=0)
     stock_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    delivery_mode: Mapped[str] = mapped_column(String(20), default="instant", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -68,6 +69,10 @@ class Order(Base):
     payment_proof_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
     payment_proof_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    payment_message_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    payment_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship()

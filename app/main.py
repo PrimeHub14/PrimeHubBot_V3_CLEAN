@@ -10,6 +10,7 @@ from app.config import settings
 from app.db.session import init_db
 from app.handlers import admin, navigation, wallet, user, support, assistant, community
 from app.webhook import create_app
+from app.services.order_expiry import order_expiry_worker
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,7 +42,11 @@ async def start_bot() -> None:
     await site.start()
 
     logging.info("PrimeHub Premium Store V2 started.")
-    await dp.start_polling(bot)
+    expiry_task = asyncio.create_task(order_expiry_worker(bot))
+    try:
+        await dp.start_polling(bot)
+    finally:
+        expiry_task.cancel()
 
 
 def main() -> None:

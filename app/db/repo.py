@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+import uuid
 
 from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription
 
@@ -53,7 +54,7 @@ async def get_product(session: AsyncSession, product_id: int) -> Product | None:
 
 
 async def update_product_field(session: AsyncSession, product_id: int, field: str, value) -> Product | None:
-    allowed = {"name", "price", "category", "description", "image", "delivery", "delivery_note"}
+    allowed = {"name", "price", "category", "description", "image", "delivery", "delivery_note", "delivery_mode"}
     if field not in allowed:
         raise ValueError("Unsupported product field")
     product = await session.get(Product, product_id)
@@ -205,6 +206,7 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
         currency=currency,
         payment_method=payment_method,
         status="pending",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
     )
     session.add(order)
     await session.flush()
@@ -230,6 +232,65 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
     await session.refresh(order)
     return order
 
+
+
+async def set_order_payment_message(session: AsyncSession, order_id: int, chat_id: int, message_id: int, base_text: str) -> None:
+    order = await session.get(Order, order_id)
+    if order:
+        order.payment_message_chat_id = chat_id
+        order.payment_message_id = message_id
+        order.payment_message_text = base_text
+        await session.commit()
+
+
+async def expire_unpaid_orders(session: AsyncSession) -> list[Order]:
+    now = datetime.now(timezone.utc)
+    stmt = select(Order).where(
+        Order.expires_at.is_not(None),
+        Order.expires_at <= now,
+        Order.delivered.is_(False),
+        Order.status.in_(["pending", "awaiting_proof", "waiting_payment"]),
+    ).with_for_update(skip_locked=True)
+    orders = list((await session.execute(stmt)).scalars().all())
+    for order in orders:
+        order.status = "expired"
+        stock_stmt = select(StockItem).where(StockItem.reserved_order_id == order.id, StockItem.status == "reserved")
+        items = list((await session.execute(stock_stmt)).scalars().all())
+        for item in items:
+            item.status = "available"
+            item.reserved_order_id = None
+    await session.commit()
+    return orders
+
+
+async def all_product_stock(session: AsyncSession) -> list[tuple[Product, int, int]]:
+    products = await list_products(session, only_active=False)
+    result = []
+    for product in products:
+        available = await available_stock_count(session, product.id)
+        reserved_stmt = select(func.count(StockItem.id)).where(StockItem.product_id == product.id, StockItem.status == "reserved")
+        reserved = int((await session.execute(reserved_stmt)).scalar() or 0)
+        result.append((product, available, reserved))
+    return result
+
+
+async def set_delivery_mode(session: AsyncSession, product_id: int, mode: str) -> Product | None:
+    if mode not in {"instant", "manual"}:
+        raise ValueError("Mode must be instant or manual")
+    product = await session.get(Product, product_id)
+    if not product:
+        return None
+    product.delivery_mode = mode
+    product.stock_enabled = True
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
+async def add_manual_stock_slots(session: AsyncSession, product_id: int, quantity: int) -> int:
+    quantity = max(1, int(quantity))
+    items = [f"MANUAL-SLOT-{product_id}-{uuid.uuid4().hex}" for _ in range(quantity)]
+    return await add_stock_items(session, product_id, items)
 
 async def get_order_with_product(session: AsyncSession, order_id: int) -> Order | None:
     stmt = select(Order).options(selectinload(Order.product), selectinload(Order.user)).where(Order.id == order_id)

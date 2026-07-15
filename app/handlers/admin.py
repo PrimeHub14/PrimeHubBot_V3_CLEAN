@@ -27,6 +27,10 @@ class EditProduct(StatesGroup):
     value = State()
 
 
+class ManualDelivery(StatesGroup):
+    content = State()
+
+
 EDITABLE_FIELDS = {
     "name": "Name",
     "price": "Price",
@@ -123,8 +127,12 @@ async def approve_payment(call: CallbackQuery):
             return
 
     await call.message.edit_reply_markup(reply_markup=None)
-    await call.message.answer(f"✅ Order #{order_id} approved and delivered.")
-    await call.answer("Approved and delivered.")
+    if getattr(order.product, "delivery_mode", "instant") == "manual":
+        await call.message.answer(f"✅ Order #{order_id} approved. Waiting for manual delivery; use /deliverorder {order_id}.")
+        await call.answer("Approved; manual delivery pending.")
+    else:
+        await call.message.answer(f"✅ Order #{order_id} approved and delivered.")
+        await call.answer("Approved and delivered.")
 
 
 @router.callback_query(F.data.startswith("adminreject:"))
@@ -142,6 +150,7 @@ async def reject_payment(call: CallbackQuery):
             await call.answer("Delivered orders cannot be rejected.", show_alert=True)
             return
         await repo.set_order_status(session, order, "rejected")
+        await repo.release_stock_items(session, order.id)
         await repo.release_stock_items(session, order.id)
         try:
             await call.bot.send_message(
@@ -546,22 +555,93 @@ async def stock_status(message: Message):
     if not admin_only(message):
         return
     parts = (message.text or "").split()
-    if len(parts) != 2 or not parts[1].isdigit():
-        await message.answer("Usage: /stock PRODUCT_ID\nExample: /stock 1")
-        return
-    product_id = int(parts[1])
     async with SessionLocal() as session:
+        if len(parts) == 1:
+            rows = await repo.all_product_stock(session)
+            if not rows:
+                await message.answer("No products found.")
+                return
+            lines = ["📦 <b>All Product Stock</b>"]
+            for product, available, reserved in rows:
+                mode = getattr(product, "delivery_mode", "instant")
+                status = "✅" if available > 0 else "❌"
+                lines.append(f"{status} #{product.id} {product.name} | ${float(product.price):.2f} | Available: {available} | Held: {reserved} | {mode}")
+            await message.answer("\n".join(lines), parse_mode="HTML")
+            return
+        if len(parts) != 2 or not parts[1].isdigit():
+            await message.answer("Usage: /stock or /stock PRODUCT_ID")
+            return
+        product_id = int(parts[1])
         product = await repo.get_product(session, product_id)
         if not product:
             await message.answer("Product not found.")
             return
         available = await repo.available_stock_count(session, product_id)
-    await message.answer(
-        f"📦 <b>{product.name}</b>\n"
-        f"Available stock: <b>{available}</b>\n"
-        f"Stock mode: <b>{'ON' if product.stock_enabled else 'OFF'}</b>",
-        parse_mode="HTML",
-    )
+    await message.answer(f"📦 <b>{product.name}</b>\nPrice: <b>${float(product.price):.2f}</b>\nAvailable stock: <b>{available}</b>\nDelivery: <b>{getattr(product, 'delivery_mode', 'instant')}</b>", parse_mode="HTML")
+
+
+@router.message(Command("deliverymode"))
+async def delivery_mode_command(message: Message):
+    if not admin_only(message): return
+    parts=(message.text or "").split()
+    if len(parts)!=3 or not parts[1].isdigit() or parts[2].lower() not in {"instant","manual"}:
+        await message.answer("Usage: /deliverymode PRODUCT_ID instant|manual")
+        return
+    async with SessionLocal() as session:
+        product=await repo.set_delivery_mode(session,int(parts[1]),parts[2].lower())
+    await message.answer(f"✅ Delivery mode set to {parts[2].lower()}" if product else "Product not found.")
+
+
+@router.message(Command("setmanualstock"))
+async def set_manual_stock(message: Message):
+    if not admin_only(message): return
+    parts=(message.text or "").split()
+    if len(parts)!=3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await message.answer("Usage: /setmanualstock PRODUCT_ID QTY")
+        return
+    async with SessionLocal() as session:
+        product=await repo.set_delivery_mode(session,int(parts[1]),"manual")
+        if not product:
+            await message.answer("Product not found."); return
+        added=await repo.add_manual_stock_slots(session,int(parts[1]),int(parts[2]))
+        total=await repo.available_stock_count(session,int(parts[1]))
+    await message.answer(f"✅ Added {added} manual-delivery unit(s). Available: {total}")
+
+
+@router.message(Command("deliverorder"))
+async def deliver_order_command(message: Message, state: FSMContext):
+    if not admin_only(message): return
+    parts=(message.text or "").split()
+    if len(parts)!=2 or not parts[1].isdigit():
+        await message.answer("Usage: /deliverorder ORDER_ID")
+        return
+    async with SessionLocal() as session:
+        order=await repo.get_order_with_product(session,int(parts[1]))
+        if not order or order.status != "paid_manual":
+            await message.answer("Order not found or not waiting for manual delivery."); return
+    await state.update_data(manual_order_id=int(parts[1]))
+    await state.set_state(ManualDelivery.content)
+    await message.answer("Send the manual delivery content now (text, photo, or document).")
+
+
+@router.message(ManualDelivery.content)
+async def send_manual_delivery(message: Message, state: FSMContext):
+    if not admin_only(message): await state.clear(); return
+    data=await state.get_data(); order_id=int(data["manual_order_id"])
+    async with SessionLocal() as session:
+        order=await repo.get_order_with_product(session,order_id)
+        if not order or order.status != "paid_manual":
+            await message.answer("Order is no longer waiting for manual delivery."); await state.clear(); return
+        if message.photo:
+            await message.bot.send_photo(order.user_id,message.photo[-1].file_id,caption=f"✅ Manual delivery for order #{order.id}")
+        elif message.document:
+            await message.bot.send_document(order.user_id,message.document.file_id,caption=f"✅ Manual delivery for order #{order.id}")
+        elif message.text:
+            await message.bot.send_message(order.user_id,f"✅ <b>Order #{order.id} delivered</b>\n\n{message.text}",parse_mode="HTML")
+        else:
+            await message.answer("Send text, photo, or document."); return
+        await repo.mark_delivered(session,order)
+    await state.clear(); await message.answer(f"✅ Order #{order_id} manually delivered.")
 
 
 @router.message(Command("removestock"))

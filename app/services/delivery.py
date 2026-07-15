@@ -41,6 +41,21 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
 
     product = order.product
 
+    if getattr(product, "delivery_mode", "instant") == "manual":
+        items = await allocate_stock_items(session, order)
+        if len(items) != max(1, order.quantity or 1):
+            raise RuntimeError("Not enough stock is available for this manual-delivery order.")
+        await complete_stock_items(session, order.id)
+        order.status = "paid_manual"
+        await session.commit()
+        await bot.send_message(order.user_id, f"✅ Payment confirmed for order #{order.id}.\n📦 This product requires manual delivery. Our team will send it shortly.")
+        for admin_id in settings.admin_ids:
+            try:
+                await bot.send_message(admin_id, f"📦 Manual delivery required\nOrder #{order.id}\nProduct: {product.name}\nQty: {order.quantity}\nCustomer: {order.user_id}\nUse /deliverorder {order.id}")
+            except Exception:
+                pass
+        return
+
     if product.stock_enabled:
         items = await allocate_stock_items(session, order)
         if len(items) != max(1, order.quantity or 1):

@@ -335,14 +335,17 @@ async def manual_payment(call: CallbackQuery):
         f"{destination}\n\n"
         f"Scan the QR or use the details above. After paying, send the screenshot, "
         f"transaction ID, UTR, or receipt here.\n"
-        f"⚠️ Delivery happens only after admin confirms the money has arrived."
+        f"⚠️ Delivery happens only after admin confirms the money has arrived.\n\n"
+        f"⏳ <b>Complete payment within 10 minutes.</b> If unpaid, this order expires and stock is released."
     )
-    await call.message.answer_photo(
+    sent = await call.message.answer_photo(
         qr_file(qr_data, f"order-{order.id}-qr.png"),
         caption=caption,
         reply_markup=manual_payment_kb(order.id),
         parse_mode="HTML",
     )
+    async with SessionLocal() as session:
+        await repo.set_order_payment_message(session, order.id, sent.chat.id, sent.message_id, caption)
     await call.answer()
 
 
