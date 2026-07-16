@@ -66,12 +66,13 @@ async def shop_command(message: Message, state: FSMContext) -> None:
     await _register_user(message)
     async with SessionLocal() as session:
         categories = await repo.list_categories(session)
+        stock_totals, all_stock = await repo.category_stock_totals(session)
     if not categories:
         await message.answer("No products are available yet.", reply_markup=main_menu_kb())
         return
     await message.answer(
         "📂 <b>Choose a category</b>",
-        reply_markup=categories_kb(categories),
+        reply_markup=categories_kb(categories, stock_totals, all_stock),
         parse_mode="HTML",
     )
 
@@ -97,18 +98,34 @@ async def orders_command(message: Message, state: FSMContext) -> None:
     await _register_user(message)
     async with SessionLocal() as session:
         orders = await repo.user_orders(session, message.from_user.id)
+
     if not orders:
         await message.answer(
             "📦 You have no orders yet. Start shopping and your orders will appear here.",
             reply_markup=main_menu_kb(),
         )
         return
+
     lines = ["📦 <b>My Recent Orders</b>"]
     for order in orders:
-        lines.append(
-            f"#{order.id} | Product {order.product_id} | Qty {order.quantity or 1} | "
-            f"{order.status} | ${float(order.amount):.2f}"
+        product_name = (
+            order.product.name
+            if getattr(order, "product", None)
+            else f"Product {order.product_id}"
         )
+        created_at = (
+            order.created_at.strftime("%d %b %Y, %H:%M UTC")
+            if order.created_at
+            else "Unknown"
+        )
+        lines.append(
+            "\n"
+            f"<b>#{order.id}</b> · {product_name}\n"
+            f"Qty: {order.quantity or 1} · Status: {order.status}\n"
+            f"Total: ${float(order.amount):.2f}\n"
+            f"Date: {created_at}"
+        )
+
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
