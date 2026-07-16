@@ -32,6 +32,15 @@ PAYMENT_LABELS = {
     "usdtbep20": "⚪ USDT (BEP20)",
 }
 
+def format_order_time(value) -> str:
+    if not value:
+        return "Unknown"
+    try:
+        return value.strftime("%d %b %Y, %H:%M UTC")
+    except Exception:
+        return str(value)
+
+
 MANUAL_LABELS = {
     "wallet": "💰 Wallet",
     "binance": "🟡 Binance",
@@ -43,7 +52,7 @@ def welcome_text(first_name: str | None = None) -> str:
     name = first_name or "friend"
     return (
         f"👋 Welcome, <b>{name}</b>!\n\n"
-        f"🛍️ <b>{settings.STORE_NAME}</b>\n"
+        f"🛍️ <b>{settings.STORE_NAME.replace('PrimeHub', 'Prime Hub')}</b>\n"
         f"Premium digital products with fast delivery.\n\n"
         f"✅ Automatic crypto confirmation\n"
         f"✅ Manual Wallet, Binance & UPI approval\n"
@@ -89,10 +98,15 @@ async def home(call: CallbackQuery):
 async def shop(call: CallbackQuery):
     async with SessionLocal() as session:
         categories = await repo.list_categories(session)
+        stock_totals, all_stock = await repo.category_stock_totals(session)
     if not categories:
         await call.message.answer("No products are available yet.")
     else:
-        await call.message.answer("📂 <b>Choose a category</b>", reply_markup=categories_kb(categories), parse_mode="HTML")
+        await call.message.answer(
+            "📂 <b>Choose a category</b>",
+            reply_markup=categories_kb(categories, stock_totals, all_stock),
+            parse_mode="HTML",
+        )
     await call.answer()
 
 
@@ -135,13 +149,26 @@ async def reviews(call: CallbackQuery):
 async def my_orders(call: CallbackQuery):
     async with SessionLocal() as session:
         orders = await repo.user_orders(session, call.from_user.id)
+
     if not orders:
         await call.message.answer("📦 You have no orders yet. Start shopping and your orders will appear here.")
     else:
         lines = ["📦 <b>My Recent Orders</b>"]
-        for o in orders:
-            lines.append(f"#{o.id} | Product {o.product_id} | Qty {o.quantity or 1} | {o.status} | ${float(o.amount):.2f}")
+        for order in orders:
+            product_name = (
+                order.product.name
+                if getattr(order, "product", None)
+                else f"Product {order.product_id}"
+            )
+            lines.append(
+                "\n"
+                f"<b>#{order.id}</b> · {product_name}\n"
+                f"Qty: {order.quantity or 1} · Status: {order.status}\n"
+                f"Total: ${float(order.amount):.2f}\n"
+                f"Date: {format_order_time(order.created_at)}"
+            )
         await call.message.answer("\n".join(lines), parse_mode="HTML")
+
     await call.answer()
 
 

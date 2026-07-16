@@ -45,6 +45,24 @@ async def list_categories(session: AsyncSession) -> list[str]:
     return [r[0] for r in rows if r[0]]
 
 
+async def category_stock_totals(session: AsyncSession) -> tuple[dict[str, int], int]:
+    """Return live available stock totals for each active category and all products."""
+    stmt = (
+        select(Product.category, func.count(StockItem.id))
+        .select_from(Product)
+        .outerjoin(
+            StockItem,
+            (StockItem.product_id == Product.id) & (StockItem.status == "available"),
+        )
+        .where(Product.active.is_(True))
+        .group_by(Product.category)
+        .order_by(Product.category)
+    )
+    rows = (await session.execute(stmt)).all()
+    totals = {str(category): int(count or 0) for category, count in rows if category}
+    return totals, sum(totals.values())
+
+
 async def list_products_by_category(session: AsyncSession, category: str) -> list[Product]:
     stmt = select(Product).where(Product.active.is_(True), Product.category == category).order_by(Product.id.desc())
     return list((await session.execute(stmt)).scalars().all())
@@ -370,7 +388,13 @@ async def recent_orders(session: AsyncSession, limit: int = 10) -> list[Order]:
 
 
 async def user_orders(session: AsyncSession, user_id: int, limit: int = 10) -> list[Order]:
-    stmt = select(Order).where(Order.user_id == user_id).order_by(Order.id.desc()).limit(limit)
+    stmt = (
+        select(Order)
+        .options(selectinload(Order.product))
+        .where(Order.user_id == user_id)
+        .order_by(Order.id.desc())
+        .limit(limit)
+    )
     return list((await session.execute(stmt)).scalars().all())
 
 

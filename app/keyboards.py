@@ -18,9 +18,25 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def categories_kb(categories: list[str]) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text=f"📂 {cat}", callback_data=f"cat:{cat}")] for cat in categories]
-    rows += [[InlineKeyboardButton(text="🔥 All Products", callback_data="cat:__all__")], [InlineKeyboardButton(text="🏠 Home", callback_data="home")]]
+def categories_kb(
+    categories: list[str],
+    stock_totals: dict[str, int] | None = None,
+    all_stock: int = 0,
+) -> InlineKeyboardMarkup:
+    stock_totals = stock_totals or {}
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"📂 {cat} · Stock: {int(stock_totals.get(cat, 0))}",
+                callback_data=f"cat:{cat}",
+            )
+        ]
+        for cat in categories
+    ]
+    rows += [
+        [InlineKeyboardButton(text=f"🔥 All Products · Stock: {int(all_stock)}", callback_data="cat:__all__")],
+        [InlineKeyboardButton(text="🏠 Home", callback_data="home")],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -30,9 +46,9 @@ def product_list_kb(products: list[Product], stock_counts: dict[int, int] | None
     for p in products:
         stock = int(stock_counts.get(p.id, 0))
         if stock > 0:
-            label = f"✅ {p.name} — ${float(p.price):.2f} | Stock: {stock}"
+            label = f"🟢 {p.name} — ${float(p.price):.2f} | Stock: {stock}"
         else:
-            label = f"❌ {p.name} — ${float(p.price):.2f} | OUT OF STOCK"
+            label = f"🔴 {p.name} — ${float(p.price):.2f} | OUT OF STOCK"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"product:{p.id}")])
     rows += [[InlineKeyboardButton(text="📂 Categories", callback_data="shop")], [InlineKeyboardButton(text="🏠 Home", callback_data="home")]]
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     WEBHOOK_PATH: str = "/nowpayments-webhook"
     NOWPAYMENTS_API_KEY: str = ""
     NOWPAYMENTS_IPN_SECRET: str = ""
-    STORE_NAME: str = "PrimeHub Store"
+    STORE_NAME: str = "Prime Hub Store"
     CURRENCY: str = "usd"
     SUPPORT_USERNAME: str = ""
     REVIEWS_TEXT: str = "⭐ 4.9/5 Customer Rating\n✅ Instant delivery\n🛡 Friendly replacement support\n💬 Fast support"

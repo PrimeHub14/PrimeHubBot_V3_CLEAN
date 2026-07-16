@@ -1,4 +1,5 @@
 from html import escape
+from datetime import timezone
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,30 @@ from app.db.repo import (
     mark_delivered,
     release_stock_items,
 )
+
+
+def delivery_timestamp(order: Order) -> str:
+    value = getattr(order, "created_at", None)
+    if not value:
+        return "Unknown"
+    try:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
+    except Exception:
+        return str(value)
+
+
+def delivery_header(order: Order) -> str:
+    return (
+        "✅ <b>Order Delivered</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"🧾 Order ID: <b>#{order.id}</b>\n"
+        f"📦 Product: <b>{escape(order.product.name)}</b>\n"
+        f"🔢 Quantity: <b>{order.quantity or 1}</b>\n"
+        f"🕒 Date & Time: <b>{delivery_timestamp(order)}</b>\n"
+        "━━━━━━━━━━━━━━"
+    )
 
 
 def render_delivery_note(order: Order) -> str:
@@ -48,7 +73,20 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
         await complete_stock_items(session, order.id)
         order.status = "paid_manual"
         await session.commit()
-        await bot.send_message(order.user_id, f"✅ Payment confirmed for order #{order.id}.\n📦 This product requires manual delivery. Our team will send it shortly.")
+        await bot.send_message(
+            order.user_id,
+            (
+                "✅ <b>Payment Confirmed</b>\n"
+                "━━━━━━━━━━━━━━\n"
+                f"🧾 Order ID: <b>#{order.id}</b>\n"
+                f"📦 Product: <b>{escape(product.name)}</b>\n"
+                f"🔢 Quantity: <b>{order.quantity or 1}</b>\n"
+                f"🕒 Date & Time: <b>{delivery_timestamp(order)}</b>\n"
+                "━━━━━━━━━━━━━━\n"
+                "👤 This product uses manual delivery. Our team will send it shortly."
+            ),
+            parse_mode="HTML",
+        )
         for admin_id in settings.admin_ids:
             try:
                 await bot.send_message(admin_id, f"📦 Manual delivery required\nOrder #{order.id}\nProduct: {product.name}\nQty: {order.quantity}\nCustomer: {order.user_id}\nUse /deliverorder {order.id}")
@@ -67,21 +105,33 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
                     await bot.send_document(
                         order.user_id,
                         item.content,
-                        caption=f"✅ Payment confirmed!\n\n📦 {product.name}\nItem {index} of {len(items)}",
+                        caption=(
+                            f"✅ Order Delivered\n"
+                            f"Order ID: #{order.id}\n"
+                            f"Product: {product.name}\n"
+                            f"Item: {index} of {len(items)}\n"
+                            f"Date & Time: {delivery_timestamp(order)}"
+                        ),
                     )
                 else:
-                    text_items.append(f"<b>Item {index}</b>\n<code>{escape(item.content)}</code>")
+                    text_items.append(
+                    f"🎁 <b>Item {index} of {len(items)}</b>\n"
+                    f"┌────────────────\n"
+                    f"<code>{escape(item.content)}</code>\n"
+                    f"└────────────────"
+                )
 
             if text_items:
                 await bot.send_message(
                     order.user_id,
                     (
-                        f"✅ <b>Payment confirmed!</b>\n\n"
-                        f"📦 <b>{escape(product.name)}</b>\n"
-                        f"🔢 Quantity: <b>{len(items)}</b>\n\n"
-                        + "\n\n━━━━━━━━━━━━━━\n\n".join(text_items)
+                        delivery_header(order)
+                        + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+                        + "\n\n".join(text_items)
                         + note_block(order)
-                        + "\n\n💛 Thank you for choosing us."
+                        + "\n\n━━━━━━━━━━━━━━\n"
+                        + "💛 Thank you for choosing Prime Hub.\n"
+                        + "🛟 Need help? Open /help and select this order."
                     ),
                     parse_mode="HTML",
                 )
