@@ -46,6 +46,17 @@ def admin_only(message: Message) -> bool:
     return bool(message.from_user and is_admin(message.from_user.id))
 
 
+async def existing_categories() -> list[str]:
+    async with SessionLocal() as session:
+        products = await repo.list_products(session, only_active=False)
+    return sorted({p.category.strip() for p in products if p.category and p.category.strip() and not p.category.strip().startswith("/")})
+
+
+def category_choice_kb(categories: list[str], prefix: str) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=f"📂 {category}", callback_data=f"{prefix}:{index}")] for index, category in enumerate(categories)]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def edit_product_kb(product_id: int, active: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -84,6 +95,8 @@ async def admin(message: Message):
         "/addproduct - Add product\n"
         "/listproducts - List products\n"
         "/editproduct PRODUCT_ID - Edit product\n"
+        "/moveproduct PRODUCT_ID - Move product to category\n"
+        "/deletecategory - Remove an empty category\n"
         "/delproduct PRODUCT_ID - Disable product\n"
         "/orders - Recent orders\n"
         "/stats - Store stats\n"
@@ -185,13 +198,45 @@ async def reject_payment(call: CallbackQuery):
 async def add_product(message: Message, state: FSMContext):
     if not admin_only(message):
         return
+    categories = await existing_categories()
+    if not categories:
+        await state.set_state(AddProduct.category)
+        await message.answer("No existing categories found. Type the category name.")
+        return
+    await state.update_data(category_options=categories)
     await state.set_state(AddProduct.category)
-    await message.answer("Product category? Example: Courses, AI Tools, Streaming, Software")
+    await message.answer(
+        "📂 Choose the product category:",
+        reply_markup=category_choice_kb(categories, "addcat"),
+    )
+
+
+@router.callback_query(AddProduct.category, F.data.startswith("addcat:"))
+async def add_category_choice(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    data = await state.get_data()
+    categories = data.get("category_options", [])
+    try:
+        category = categories[int(call.data.split(":")[1])]
+    except (IndexError, ValueError):
+        await call.answer("Category not found.", show_alert=True)
+        return
+    await state.update_data(category=category)
+    await state.set_state(AddProduct.name)
+    await call.message.edit_reply_markup(reply_markup=None)
+    await call.message.answer(f"✅ Category: {category}\n\nProduct name? Example: Coursera Premium 12M")
+    await call.answer()
 
 
 @router.message(AddProduct.category)
 async def add_category(message: Message, state: FSMContext):
-    await state.update_data(category=message.text.strip())
+    # Fallback only when the store has no categories yet.
+    category = (message.text or "").strip()
+    if not category or category.startswith("/"):
+        await message.answer("Please type a valid category name without a slash.")
+        return
+    await state.update_data(category=category)
     await state.set_state(AddProduct.name)
     await message.answer("Product name? Example: Coursera Premium 12M")
 
@@ -283,6 +328,104 @@ async def list_products(message: Message):
         lines.append(f"#{p.id} | {'✅' if p.active else '❌'} | {image} | {p.category} | {p.name} | ${float(p.price):.2f} | {stock}")
     lines.append("\nEdit with: /editproduct PRODUCT_ID")
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("moveproduct"))
+async def move_product_command(message: Message, state: FSMContext):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Usage: /moveproduct PRODUCT_ID\nExample: /moveproduct 12")
+        return
+    product_id = int(parts[1])
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, product_id)
+    if not product:
+        await message.answer("Product not found.")
+        return
+    categories = await existing_categories()
+    categories = [c for c in categories if c != product.category]
+    if not categories:
+        await message.answer("No other category is available.")
+        return
+    await state.update_data(move_product_id=product_id, move_category_options=categories)
+    await message.answer(
+        f"📦 <b>{product.name}</b>\nCurrent category: {product.category}\n\nChoose the new category:",
+        reply_markup=category_choice_kb(categories, "movecat"),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("movecat:"))
+async def move_product_category(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    data = await state.get_data()
+    categories = data.get("move_category_options", [])
+    product_id = data.get("move_product_id")
+    try:
+        category = categories[int(call.data.split(":")[1])]
+    except (IndexError, ValueError):
+        await call.answer("Category not found.", show_alert=True)
+        return
+    if not product_id:
+        await call.answer("Move session expired. Run /moveproduct again.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        product = await repo.update_product_field(session, int(product_id), "category", category)
+    await state.clear()
+    if not product:
+        await call.answer("Product not found.", show_alert=True)
+        return
+    await call.message.edit_reply_markup(reply_markup=None)
+    await call.message.answer(f"✅ <b>{product.name}</b> moved to <b>{category}</b>.", parse_mode="HTML")
+    await call.answer("Product moved.")
+
+
+@router.message(Command("deletecategory"))
+async def delete_category_command(message: Message, state: FSMContext):
+    if not admin_only(message):
+        return
+    categories = await existing_categories()
+    if not categories:
+        await message.answer("No categories found.")
+        return
+    await state.update_data(delete_category_options=categories)
+    await message.answer(
+        "🗑 Choose a category to remove.\n\nOnly an empty category can be removed safely.",
+        reply_markup=category_choice_kb(categories, "delcat"),
+    )
+
+
+@router.callback_query(F.data.startswith("delcat:"))
+async def delete_category_choice(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    data = await state.get_data()
+    categories = data.get("delete_category_options", [])
+    try:
+        category = categories[int(call.data.split(":")[1])]
+    except (IndexError, ValueError):
+        await call.answer("Category not found.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        products = await repo.list_products(session, only_active=False)
+        assigned = [p for p in products if p.category == category]
+    if assigned:
+        await call.answer(
+            f"{len(assigned)} product(s) still use this category. Move them first.",
+            show_alert=True,
+        )
+        return
+    await state.clear()
+    await call.message.edit_reply_markup(reply_markup=None)
+    await call.message.answer(
+        f"✅ Category <b>{category}</b> removed from the menu.\n"
+        "Categories are generated from product category values, so an empty category disappears automatically.",
+        parse_mode="HTML",
+    )
+    await call.answer("Category removed.")
 
 
 @router.message(Command("editproduct"))
