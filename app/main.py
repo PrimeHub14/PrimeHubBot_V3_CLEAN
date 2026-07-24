@@ -21,11 +21,13 @@ from app.handlers import (
     sales_ledger,
     trc20,
     bep20,
+    enterprise,
 )
 from app.webhook import create_app
 from app.services.order_expiry import order_expiry_worker
 from app.services.tron_monitor import monitor_loop as tron_monitor_loop
 from app.services.bsc_monitor import monitor_loop as bsc_monitor_loop
+from app.handlers.enterprise import scheduled_broadcast_worker
 
 logging.basicConfig(level=logging.INFO)
 
@@ -44,6 +46,7 @@ async def start_bot() -> None:
     dp.include_router(growth.router)
     dp.include_router(reports.router)
     dp.include_router(sales_ledger.router)
+    dp.include_router(enterprise.router)
     dp.include_router(admin.router)
     dp.include_router(wallet.router)
 
@@ -67,6 +70,7 @@ async def start_bot() -> None:
     expiry_task = asyncio.create_task(order_expiry_worker(bot))
     trc20_task = asyncio.create_task(tron_monitor_loop(bot))
     bep20_task = asyncio.create_task(bsc_monitor_loop(bot))
+    broadcast_task = asyncio.create_task(scheduled_broadcast_worker(bot))
 
     try:
         await dp.start_polling(bot)
@@ -74,10 +78,12 @@ async def start_bot() -> None:
         expiry_task.cancel()
         trc20_task.cancel()
         bep20_task.cancel()
+        broadcast_task.cancel()
         await asyncio.gather(
             expiry_task,
             trc20_task,
             bep20_task,
+            broadcast_task,
             return_exceptions=True,
         )
 

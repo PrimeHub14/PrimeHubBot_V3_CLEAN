@@ -20,7 +20,7 @@ class CsvImportFlow(StatesGroup):
     file = State()
 
 
-LANGUAGES = {"en": "English", "pt": "Português", "hi": "हिन्दी"}
+LANGUAGES = {"en": "English", "pt": "Português", "hi": "हिन्दी", "es": "Español", "ar": "العربية"}
 
 
 @router.message(Command("coupon"))

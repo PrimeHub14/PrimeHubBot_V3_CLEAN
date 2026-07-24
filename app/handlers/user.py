@@ -411,6 +411,8 @@ async def manual_payment(call: CallbackQuery):
     async with SessionLocal() as session:
         await repo.upsert_user(session, call.from_user)
         product = await repo.get_product(session, product_id)
+        if product:
+            await repo.add_product_view(session, call.from_user.id, product_id)
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)
             return

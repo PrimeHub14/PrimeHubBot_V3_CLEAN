@@ -42,3 +42,15 @@ async def init_db() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_subscription_user_product "
             "ON stock_subscriptions (user_id, product_id)"
         ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_wishlist_user_product "
+            "ON wishlist_items (user_id, product_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_product_views_user_created "
+            "ON product_views (user_id, created_at DESC)"
+        ))
+
+
+# V5 tables are created by Base.metadata.create_all above.
+# These indexes are applied inside init_db through the following compatibility hook.

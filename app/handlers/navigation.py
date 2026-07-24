@@ -1,3 +1,4 @@
+from html import escape
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -6,6 +7,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
+from app.i18n import tr
 from app.keyboards import categories_kb, main_menu_kb, wallet_home_kb
 
 router = Router()
@@ -38,16 +40,25 @@ async def _register_user(message: Message) -> None:
 async def _show_home(message: Message, state: FSMContext) -> None:
     await state.clear()
     await _register_user(message)
-    text = _welcome_text(message.from_user.first_name if message.from_user else None)
+    async with SessionLocal() as session:
+        user = await session.get(__import__("app.db.models", fromlist=["User"]).User, message.from_user.id)
+        lang = (user.language or "en") if user else "en"
+        metrics = await repo.user_profile_metrics(session, message.from_user.id)
+    text = (
+        f"💎 <b>{tr(lang, 'store')}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👋 {tr(lang, 'welcome')}, <b>{escape(message.from_user.first_name or 'friend')}</b>\n"
+        f"💰 Wallet: <b>${metrics['wallet']:.2f}</b> · 💎 {escape(metrics['vip'])}\n"
+        f"🏆 {metrics['points']} pts · 📦 {metrics['orders']} orders\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "⚡ Fast digital delivery · 🔒 Secure checkout\n"
+        "🎁 Rewards · 🔔 Restock alerts · 🛟 Support\n\n"
+        "Choose an option below 👇"
+    )
     if settings.WELCOME_IMAGE_FILE_ID:
-        await message.answer_photo(
-            settings.WELCOME_IMAGE_FILE_ID,
-            caption=text,
-            reply_markup=main_menu_kb(),
-            parse_mode="HTML",
-        )
+        await message.answer_photo(settings.WELCOME_IMAGE_FILE_ID, caption=text, reply_markup=main_menu_kb(lang), parse_mode="HTML")
     else:
-        await message.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
+        await message.answer(text, reply_markup=main_menu_kb(lang), parse_mode="HTML")
 
 
 @router.message(CommandStart())

@@ -1,12 +1,12 @@
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import uuid
 
-from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription, Coupon, CouponRedemption, ReferralReward, LoyaltyTransaction, FlashSale
+from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription, Coupon, CouponRedemption, ReferralReward, LoyaltyTransaction, FlashSale, WishlistItem, ProductReview, ProductView, ScheduledBroadcast, AdminAuditLog
 
 MANUAL_METHODS = {"wallet", "binance", "upi"}
 
@@ -733,3 +733,161 @@ async def award_growth_rewards(session: AsyncSession, order: Order) -> None:
                         referrer_id=referrer.id, referred_user_id=user.id, order_id=order.id, amount=commission
                     ))
     await session.commit()
+
+
+# ---------- Prime Hub V5 Enterprise helpers ----------
+async def user_profile_metrics(session: AsyncSession, user_id: int) -> dict:
+    user = await session.get(User, user_id)
+    paid = ["delivered", "paid", "completed", "manual_pending"]
+    total_orders = (await session.execute(select(func.count(Order.id)).where(Order.user_id == user_id))).scalar() or 0
+    paid_orders = (await session.execute(select(func.count(Order.id)).where(Order.user_id == user_id, Order.status.in_(paid)))).scalar() or 0
+    spent = (await session.execute(select(func.coalesce(func.sum(Order.amount), 0)).where(Order.user_id == user_id, Order.status.in_(paid)))).scalar() or 0
+    wishlist_count = (await session.execute(select(func.count(WishlistItem.id)).where(WishlistItem.user_id == user_id))).scalar() or 0
+    invited, referral_earned = await referral_stats(session, user_id)
+    return {
+        "wallet": float(user.wallet_balance or 0) if user else 0.0,
+        "orders": int(total_orders), "paid_orders": int(paid_orders), "spent": float(spent),
+        "points": int(user.loyalty_points or 0) if user else 0,
+        "vip": (user.vip_tier or "Bronze") if user else "Bronze",
+        "wishlist": int(wishlist_count), "referrals": int(invited),
+        "referral_earned": float(referral_earned),
+        "language": (user.language or "en") if user else "en",
+    }
+
+
+async def search_products(session: AsyncSession, query: str, limit: int = 20) -> list[Product]:
+    term = f"%{query.strip()}%"
+    stmt = select(Product).where(
+        Product.active.is_(True),
+        or_(Product.name.ilike(term), Product.description.ilike(term), Product.category.ilike(term)),
+    ).order_by(Product.sold_count.desc(), Product.id.desc()).limit(limit)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def toggle_wishlist(session: AsyncSession, user_id: int, product_id: int) -> bool:
+    item = (await session.execute(select(WishlistItem).where(
+        WishlistItem.user_id == user_id, WishlistItem.product_id == product_id
+    ))).scalar_one_or_none()
+    if item:
+        await session.delete(item)
+        await session.commit()
+        return False
+    session.add(WishlistItem(user_id=user_id, product_id=product_id))
+    await session.commit()
+    return True
+
+
+async def wishlist_products(session: AsyncSession, user_id: int) -> list[Product]:
+    stmt = select(Product).join(WishlistItem, WishlistItem.product_id == Product.id).where(
+        WishlistItem.user_id == user_id, Product.active.is_(True)
+    ).order_by(WishlistItem.id.desc())
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def add_product_view(session: AsyncSession, user_id: int, product_id: int) -> None:
+    session.add(ProductView(user_id=user_id, product_id=product_id))
+    await session.commit()
+
+
+async def recently_viewed_products(session: AsyncSession, user_id: int, limit: int = 8) -> list[Product]:
+    sub = select(ProductView.product_id, func.max(ProductView.created_at).label("last_seen")).where(
+        ProductView.user_id == user_id
+    ).group_by(ProductView.product_id).subquery()
+    stmt = select(Product).join(sub, sub.c.product_id == Product.id).where(
+        Product.active.is_(True)
+    ).order_by(sub.c.last_seen.desc()).limit(limit)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def product_review_summary(session: AsyncSession, product_id: int) -> tuple[float, int]:
+    row = (await session.execute(select(
+        func.coalesce(func.avg(ProductReview.rating), 0), func.count(ProductReview.id)
+    ).where(ProductReview.product_id == product_id, ProductReview.approved.is_(True)))).one()
+    return float(row[0] or 0), int(row[1] or 0)
+
+
+async def recent_product_reviews(session: AsyncSession, product_id: int, limit: int = 8):
+    stmt = select(ProductReview, User).join(User, User.id == ProductReview.user_id).where(
+        ProductReview.product_id == product_id, ProductReview.approved.is_(True)
+    ).order_by(ProductReview.id.desc()).limit(limit)
+    return list((await session.execute(stmt)).all())
+
+
+async def create_product_review(session: AsyncSession, user_id: int, order_id: int, rating: int, comment: str):
+    order = await get_order_with_product(session, order_id)
+    if not order or order.user_id != user_id:
+        raise ValueError("Order not found")
+    if order.status != "delivered" and not order.delivered:
+        raise ValueError("Only delivered orders can be reviewed")
+    existing = (await session.execute(select(ProductReview).where(ProductReview.order_id == order_id))).scalar_one_or_none()
+    if existing:
+        raise ValueError("This order has already been reviewed")
+    review = ProductReview(
+        user_id=user_id, product_id=order.product_id, order_id=order_id,
+        rating=max(1, min(5, int(rating))), comment=comment.strip()
+    )
+    session.add(review)
+    await session.commit()
+    await session.refresh(review)
+    return review
+
+
+async def set_user_language(session: AsyncSession, user_id: int, language: str):
+    user = await session.get(User, user_id)
+    if not user:
+        return None
+    user.language = language
+    await session.commit()
+    return user
+
+
+async def inventory_enterprise_summary(session: AsyncSession) -> dict:
+    products = await list_products(session, only_active=False)
+    rows, total, low, out = [], 0, 0, 0
+    for product in products:
+        available = await available_stock_count(session, product.id)
+        total += available
+        if available == 0: out += 1
+        elif available <= 3: low += 1
+        rows.append((product, available))
+    rows.sort(key=lambda x: (x[1], -int(x[0].sold_count or 0)))
+    return {"total_stock": total, "low": low, "out": out, "rows": rows}
+
+
+async def audience_user_ids(session: AsyncSession, audience: str) -> list[int]:
+    if audience == "vip":
+        stmt = select(User.id).where(User.vip_tier.in_(["Silver", "Gold", "Diamond"]))
+    elif audience == "buyers":
+        stmt = select(func.distinct(Order.user_id)).where(Order.status == "delivered")
+    elif audience == "referrers":
+        stmt = select(User.id).where(User.referral_code.is_not(None))
+    else:
+        stmt = select(User.id)
+    return [int(row[0]) for row in (await session.execute(stmt)).all()]
+
+
+async def schedule_broadcast(session: AsyncSession, audience: str, message: str, scheduled_at):
+    item = ScheduledBroadcast(audience=audience, message=message, scheduled_at=scheduled_at)
+    session.add(item)
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+async def due_broadcasts(session: AsyncSession):
+    now = datetime.now(timezone.utc)
+    stmt = select(ScheduledBroadcast).where(
+        ScheduledBroadcast.status == "scheduled", ScheduledBroadcast.scheduled_at <= now
+    ).order_by(ScheduledBroadcast.scheduled_at).limit(10)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def audit_log(session: AsyncSession, admin_id: int, action: str, details: str = "") -> None:
+    session.add(AdminAuditLog(admin_id=admin_id, action=action, details=details))
+    await session.commit()
+
+
+async def recent_audit_logs(session: AsyncSession, limit: int = 20):
+    return list((await session.execute(
+        select(AdminAuditLog).order_by(AdminAuditLog.id.desc()).limit(limit)
+    )).scalars().all())
