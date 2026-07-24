@@ -79,6 +79,7 @@ class Order(Base):
     payment_message_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     payment_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payment_message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivery_record: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship()

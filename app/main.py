@@ -17,6 +17,8 @@ from app.handlers import (
     assistant,
     community,
     growth,
+    reports,
+    sales_ledger,
     trc20,
     bep20,
 )
@@ -40,6 +42,8 @@ async def start_bot() -> None:
     dp.include_router(assistant.router)
     dp.include_router(community.router)
     dp.include_router(growth.router)
+    dp.include_router(reports.router)
+    dp.include_router(sales_ledger.router)
     dp.include_router(admin.router)
     dp.include_router(wallet.router)
 

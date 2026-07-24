@@ -21,7 +21,7 @@ class CustomReportFlow(StatesGroup):
     dates = State()
 
 
-PAID_STATUSES = {"delivered", "manual_pending", "paid", "completed"}
+PAID_STATUSES = {"delivered", "paid_manual", "manual_pending", "paid", "completed"}
 
 
 def report_menu() -> InlineKeyboardMarkup:
@@ -114,7 +114,7 @@ async def build_sales_report(start: datetime, end: datetime, label: str) -> str:
             await session.execute(
                 select(func.count(Order.id)).where(
                     *base,
-                    Order.status.in_(["pending", "awaiting_proof", "proof_submitted", "waiting_payment"]),
+                    Order.status.in_(["pending", "awaiting_proof", "proof_submitted", "waiting_payment", "waiting_trc20", "waiting_bep20"]),
                 )
             )
         ).scalar() or 0

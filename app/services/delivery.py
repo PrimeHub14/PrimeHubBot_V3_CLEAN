@@ -1,7 +1,10 @@
 from html import escape
 from datetime import timezone
+import csv
+import io
 
 from aiogram import Bot
+from aiogram.types import BufferedInputFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Order
@@ -60,6 +63,53 @@ def note_block(order: Order) -> str:
     return f"\n\n━━━━━━━━━━━━━━\n\n📘 <b>Important instructions</b>\n{note}"
 
 
+def make_bulk_txt(order: Order, text_items: list[tuple[int, str]]) -> BufferedInputFile:
+    lines = [
+        "Prime Hub - Bulk Order Delivery",
+        f"Order ID: #{order.id}",
+        f"Product: {order.product.name}",
+        f"Quantity: {order.quantity or 1}",
+        f"Date & Time: {delivery_timestamp(order)}",
+        "",
+    ]
+    for index, content in text_items:
+        lines.extend([
+            f"Item {index} of {order.quantity or len(text_items)}",
+            "-" * 50,
+            content,
+            "",
+        ])
+    note = (order.product.delivery_note or "").strip()
+    if note:
+        lines.extend(["Important Instructions", "-" * 50, note, ""])
+    payload = "\n".join(lines).encode("utf-8")
+    return BufferedInputFile(payload, filename=f"PrimeHub_Order_{order.id}_Delivery.txt")
+
+
+def make_bulk_csv(order: Order, text_items: list[tuple[int, str]]) -> BufferedInputFile:
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "order_id",
+        "product",
+        "quantity",
+        "item_number",
+        "delivery_content",
+        "order_date_utc",
+    ])
+    for index, content in text_items:
+        writer.writerow([
+            order.id,
+            order.product.name,
+            order.quantity or 1,
+            index,
+            content,
+            delivery_timestamp(order),
+        ])
+    payload = output.getvalue().encode("utf-8-sig")
+    return BufferedInputFile(payload, filename=f"PrimeHub_Order_{order.id}_Delivery.csv")
+
+
 async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
     if order.delivered:
         return
@@ -99,7 +149,7 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
         if len(items) != max(1, order.quantity or 1):
             raise RuntimeError("Not enough stock is available for this order. Add stock before retrying delivery.")
         try:
-            text_items = []
+            text_items: list[tuple[int, str]] = []
             for index, item in enumerate(items, start=1):
                 if item.is_file_id:
                     await bot.send_document(
@@ -114,20 +164,48 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
                         ),
                     )
                 else:
-                    text_items.append(
-                    f"🎁 <b>Item {index} of {len(items)}</b>\n"
-                    f"┌────────────────\n"
-                    f"<code>{escape(item.content)}</code>\n"
-                    f"└────────────────"
-                )
+                    text_items.append((index, item.content))
 
-            if text_items:
+            if text_items and len(text_items) >= 5:
+                await bot.send_message(
+                    order.user_id,
+                    (
+                        delivery_header(order)
+                        + "\n\n📁 <b>Bulk delivery ready</b>\n"
+                        + f"Your {len(text_items)} text delivery item(s) are attached below as "
+                          "<b>TXT</b> and <b>CSV</b> files so you can download and save them easily."
+                        + note_block(order)
+                        + "\n\n━━━━━━━━━━━━━━\n"
+                        + "💛 Thank you for choosing Prime Hub."
+                    ),
+                    parse_mode="HTML",
+                )
+                await bot.send_document(
+                    order.user_id,
+                    make_bulk_txt(order, text_items),
+                    caption=f"📄 TXT delivery file — Order #{order.id}",
+                )
+                await bot.send_document(
+                    order.user_id,
+                    make_bulk_csv(order, text_items),
+                    caption=f"📊 CSV delivery file — Order #{order.id}",
+                )
+            elif text_items:
+                rendered_items = [
+                    (
+                        f"🎁 <b>Item {index} of {len(items)}</b>\n"
+                        f"┌────────────────\n"
+                        f"<code>{escape(content)}</code>\n"
+                        f"└────────────────"
+                    )
+                    for index, content in text_items
+                ]
                 await bot.send_message(
                     order.user_id,
                     (
                         delivery_header(order)
                         + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
-                        + "\n\n".join(text_items)
+                        + "\n\n".join(rendered_items)
                         + note_block(order)
                         + "\n\n━━━━━━━━━━━━━━\n"
                         + "💛 Thank you for choosing Prime Hub.\n"

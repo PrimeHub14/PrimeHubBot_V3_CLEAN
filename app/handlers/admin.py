@@ -100,6 +100,8 @@ async def admin(message: Message):
         "/delproduct PRODUCT_ID - Disable product\n"
         "/orders - Recent orders\n"
         "/stats - Store stats\n"
+        "/reports - Sales reports by date\n"
+        "/solddata - Exact sold-item ledger & CSV exports\n"
         "/addstock PRODUCT_ID - Add unique stock\n"
         "/stock PRODUCT_ID - Check available stock\n"
         "/removestock PRODUCT_ID QTY - Reduce stock\n"
@@ -790,10 +792,13 @@ async def send_manual_delivery(message: Message, state: FSMContext):
         if not order or order.status != "paid_manual":
             await message.answer("Order is no longer waiting for manual delivery."); await state.clear(); return
         if message.photo:
+            order.delivery_record = f"PHOTO_FILE_ID:{message.photo[-1].file_id}"
             await message.bot.send_photo(order.user_id,message.photo[-1].file_id,caption=f"✅ Manual delivery for order #{order.id}")
         elif message.document:
+            order.delivery_record = f"DOCUMENT_FILE_ID:{message.document.file_id}"
             await message.bot.send_document(order.user_id,message.document.file_id,caption=f"✅ Manual delivery for order #{order.id}")
         elif message.text:
+            order.delivery_record = message.text
             await message.bot.send_message(order.user_id,f"✅ <b>Order #{order.id} delivered</b>\n\n{message.text}",parse_mode="HTML")
         else:
             await message.answer("Send text, photo, or document."); return
