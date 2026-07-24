@@ -118,6 +118,16 @@ def manual_payment_kb(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def crypto_waiting_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Buttons shown under direct TRC20/BEP20 payment QR cards."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"cancelorder:{order_id}")],
+            [InlineKeyboardButton(text="💬 Payment Help", callback_data="help:home")],
+        ]
+    )
+
+
 def admin_review_kb(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Approve & Deliver", callback_data=f"adminapprove:{order_id}")],

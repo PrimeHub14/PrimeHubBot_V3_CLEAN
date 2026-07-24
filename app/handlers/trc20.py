@@ -8,6 +8,7 @@ from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.services.qr import make_address_qr
+from app.keyboards import crypto_waiting_kb
 
 router = Router()
 
@@ -88,6 +89,7 @@ async def direct_trc(call: CallbackQuery):
         make_address_qr(settings.TRC20_RECEIVE_ADDRESS),
         caption=caption,
         parse_mode="HTML",
+        reply_markup=crypto_waiting_kb(order.id),
     )
 
     # Lets the existing expiry UI know which payment message belongs to this order.
