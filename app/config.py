@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     TRC20_PAYMENT_TIMEOUT_MINUTES: int = 10
     TRC20_POLL_SECONDS: int = 15
 
+    # Direct USDT BEP20 payment verification on BNB Smart Chain
+    BEP20_RECEIVE_ADDRESS: str = ""
+    BSC_RPC_URL: str = ""
+    BEP20_PAYMENT_TIMEOUT_MINUTES: int = 30
+    BEP20_POLL_SECONDS: int = 10
+    BEP20_CONFIRMATIONS: int = 3
+    BEP20_BACKFILL_BLOCKS: int = 10000
+
     @field_validator("DATABASE_URL")
     @classmethod
     def normalize_db_url(cls, value: str) -> str:

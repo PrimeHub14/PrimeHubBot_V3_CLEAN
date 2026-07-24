@@ -18,10 +18,12 @@ from app.handlers import (
     community,
     growth,
     trc20,
+    bep20,
 )
 from app.webhook import create_app
 from app.services.order_expiry import order_expiry_worker
-from app.services.tron_monitor import monitor_loop
+from app.services.tron_monitor import monitor_loop as tron_monitor_loop
+from app.services.bsc_monitor import monitor_loop as bsc_monitor_loop
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,8 +43,9 @@ async def start_bot() -> None:
     dp.include_router(admin.router)
     dp.include_router(wallet.router)
 
-    # Direct TRC20 callback must be registered before the general user router.
+    # Direct blockchain payment callbacks must be registered before the general user router.
     dp.include_router(trc20.router)
+    dp.include_router(bep20.router)
     dp.include_router(user.router)
 
     app = create_app(bot)
@@ -55,17 +58,24 @@ async def start_bot() -> None:
     )
     await site.start()
 
-    logging.info("Prime Hub V3 started with direct TRC20 auto verification.")
+    logging.info("Prime Hub V3 started with direct TRC20 + BEP20 auto verification.")
 
     expiry_task = asyncio.create_task(order_expiry_worker(bot))
-    trc20_task = asyncio.create_task(monitor_loop(bot))
+    trc20_task = asyncio.create_task(tron_monitor_loop(bot))
+    bep20_task = asyncio.create_task(bsc_monitor_loop(bot))
 
     try:
         await dp.start_polling(bot)
     finally:
         expiry_task.cancel()
         trc20_task.cancel()
-        await asyncio.gather(expiry_task, trc20_task, return_exceptions=True)
+        bep20_task.cancel()
+        await asyncio.gather(
+            expiry_task,
+            trc20_task,
+            bep20_task,
+            return_exceptions=True,
+        )
 
 
 def main() -> None:

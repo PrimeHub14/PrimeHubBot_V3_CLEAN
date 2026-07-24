@@ -93,7 +93,7 @@ def payment_methods_kb(product_id: int, quantity: int = 1) -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Pay with Wallet", callback_data=f"walletpay:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="🟡 Pay with Binance", callback_data=f"manual:{product_id}:{quantity}:binance")],
-        [InlineKeyboardButton(text="🟡 Pay with USDT (BEP20)", callback_data=f"paycoin:{product_id}:{quantity}:usdtbep20")],
+        [InlineKeyboardButton(text="🟡 Pay with USDT (BEP20) — Auto Verify", callback_data=f"directbep:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="🟢 Pay with USDT (TRC20) — Auto Verify", callback_data=f"directtrc:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="🇮🇳 Pay with UPI", callback_data=f"manual:{product_id}:{quantity}:upi")],
         [InlineKeyboardButton(text="⬅️ Back", callback_data=f"quantity:{product_id}:{quantity}")],
