@@ -27,6 +27,10 @@ router = Router()
 class OrderProofState(StatesGroup):
     waiting_proof = State()
 
+
+class QuantityInputState(StatesGroup):
+    waiting_quantity = State()
+
 PAYMENT_LABELS = {
     "usdttrc20": "⚪ USDT (TRC20)",
     "usdtbep20": "⚪ USDT (BEP20)",
@@ -201,7 +205,7 @@ async def out_of_stock(call: CallbackQuery):
 async def choose_quantity(call: CallbackQuery):
     _, product_id_raw, quantity_raw = call.data.split(":")
     product_id = int(product_id_raw)
-    quantity = max(1, min(int(quantity_raw), 13))
+    quantity = max(1, int(quantity_raw))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
         available_stock = await repo.available_stock_count(session, product_id) if product else 0
@@ -221,10 +225,96 @@ async def choose_quantity(call: CallbackQuery):
         f"Price each: <b>${float(product.price):.2f}</b>\n"
         f"Quantity: <b>{quantity}</b>\n"
         f"Total: <b>${total:.2f}</b>\n\n"
-        f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{min(13, available_stock)}</b>"
+        f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
     )
     await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("typeqty:"))
+async def ask_typed_quantity(call: CallbackQuery, state: FSMContext):
+    product_id = int(call.data.split(":", 1)[1])
+
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, product_id)
+        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+
+    if not product or not product.active:
+        await call.answer("Product not found.", show_alert=True)
+        return
+    if available_stock <= 0:
+        await call.answer("This product is out of stock.", show_alert=True)
+        return
+
+    await state.clear()
+    await state.update_data(quantity_product_id=product_id)
+    await state.set_state(QuantityInputState.waiting_quantity)
+
+    await call.message.answer(
+        f"⌨️ <b>Type Quantity</b>\n\n"
+        f"📦 {product.name}\n"
+        f"Available stock: <b>{available_stock}</b>\n\n"
+        f"Send the quantity you want as a number.\n"
+        f"Example: <code>25</code>",
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@router.message(QuantityInputState.waiting_quantity)
+async def receive_typed_quantity(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+
+    if not raw.isdigit():
+        await message.answer("Please send only a whole number, for example: <code>25</code>", parse_mode="HTML")
+        return
+
+    quantity = int(raw)
+    if quantity < 1:
+        await message.answer("Quantity must be at least 1.")
+        return
+
+    data = await state.get_data()
+    product_id = int(data.get("quantity_product_id", 0))
+
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, product_id)
+        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+
+    if not product or not product.active:
+        await state.clear()
+        await message.answer("Product not found or no longer available.")
+        return
+
+    if available_stock <= 0:
+        await state.clear()
+        await message.answer("This product is now out of stock.")
+        return
+
+    if quantity > available_stock:
+        await message.answer(
+            f"Only <b>{available_stock}</b> item(s) are currently available.\n"
+            f"Please type a quantity from <b>1 to {available_stock}</b>.",
+            parse_mode="HTML",
+        )
+        return
+
+    await state.clear()
+
+    total = float(product.price) * quantity
+    text = (
+        f"💳 <b>Choose Payment Method</b>\n\n"
+        f"📦 Product: <b>{product.name}</b>\n"
+        f"🔢 Quantity: <b>{quantity}</b>\n"
+        f"💵 Total: <b>${total:.2f}</b>\n\n"
+        f"Select the method you prefer 👇"
+    )
+
+    await message.answer(
+        text,
+        reply_markup=payment_methods_kb(product.id, quantity),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data == "qtynoop")
@@ -236,7 +326,7 @@ async def quantity_noop(call: CallbackQuery):
 async def change_quantity(call: CallbackQuery):
     _, product_id_raw, quantity_raw, delta_raw = call.data.split(":")
     product_id = int(product_id_raw)
-    quantity = max(1, min(int(quantity_raw) + int(delta_raw), 13))
+    quantity = max(1, int(quantity_raw) + int(delta_raw))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
         available_stock = await repo.available_stock_count(session, product_id) if product else 0
@@ -256,7 +346,7 @@ async def change_quantity(call: CallbackQuery):
         f"Price each: <b>${float(product.price):.2f}</b>\n"
         f"Quantity: <b>{quantity}</b>\n"
         f"Total: <b>${total:.2f}</b>\n\n"
-        f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{min(13, available_stock)}</b>"
+        f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
     )
     try:
         await call.message.edit_text(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
@@ -269,7 +359,7 @@ async def change_quantity(call: CallbackQuery):
 async def payment_menu(call: CallbackQuery):
     parts = call.data.split(":")
     product_id = int(parts[1])
-    quantity = max(1, min(int(parts[2]) if len(parts) > 2 else 1, 13))
+    quantity = max(1, int(parts[2]) if len(parts) > 2 else 1)
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
         available_stock = await repo.available_stock_count(session, product_id) if product else 0
@@ -299,7 +389,7 @@ async def manual_payment(call: CallbackQuery):
     parts = call.data.split(":")
     if len(parts) == 4:
         _, product_id_raw, quantity_raw, method = parts
-        quantity = max(1, min(int(quantity_raw), 13))
+        quantity = max(1, int(quantity_raw))
     else:
         _, product_id_raw, method = parts
         quantity = 1
@@ -429,7 +519,7 @@ async def paycoin(call: CallbackQuery):
     parts = call.data.split(":")
     if len(parts) == 4:
         _, product_id_raw, quantity_raw, pay_currency = parts
-        quantity = max(1, min(int(quantity_raw), 13))
+        quantity = max(1, int(quantity_raw))
     else:
         _, product_id_raw, pay_currency = parts
         quantity = 1

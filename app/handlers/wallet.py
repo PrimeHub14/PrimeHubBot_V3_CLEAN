@@ -241,7 +241,7 @@ async def wallet_reject(call: CallbackQuery):
 @router.callback_query(F.data.startswith("walletpay:"))
 async def wallet_pay(call: CallbackQuery):
     _, product_id_raw, quantity_raw = call.data.split(":")
-    product_id, quantity = int(product_id_raw), max(1, min(int(quantity_raw), 13))
+    product_id, quantity = int(product_id_raw), max(1, int(quantity_raw))
     async with SessionLocal() as session:
         await repo.upsert_user(session, call.from_user)
         product = await repo.get_product(session, product_id)

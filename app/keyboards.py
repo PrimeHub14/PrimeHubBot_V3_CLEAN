@@ -77,13 +77,14 @@ def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarku
 
 
 def quantity_kb(product_id: int, quantity: int) -> InlineKeyboardMarkup:
-    quantity = max(1, min(quantity, 13))
+    quantity = max(1, int(quantity))
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="➖", callback_data=f"qty:{product_id}:{quantity}:-1"),
             InlineKeyboardButton(text=f"{quantity}", callback_data="qtynoop"),
             InlineKeyboardButton(text="➕", callback_data=f"qty:{product_id}:{quantity}:1"),
         ],
+        [InlineKeyboardButton(text="⌨️ Type Quantity", callback_data=f"typeqty:{product_id}")],
         [InlineKeyboardButton(text="✅ Continue to Payment", callback_data=f"paymenu:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="⬅️ Back", callback_data=f"product:{product_id}")],
     ])

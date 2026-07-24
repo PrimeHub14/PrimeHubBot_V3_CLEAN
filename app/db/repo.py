@@ -252,7 +252,7 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
     Live inventory is claimed atomically only after payment is confirmed.
     """
     await cancel_open_orders_for_user(session, user_id)
-    quantity = max(1, min(int(quantity), 13))
+    quantity = max(1, int(quantity))
     if not product.stock_enabled:
         raise ValueError("This product is not configured for stock-controlled delivery")
 

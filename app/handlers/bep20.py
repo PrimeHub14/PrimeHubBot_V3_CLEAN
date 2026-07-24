@@ -30,7 +30,7 @@ async def direct_bep(call: CallbackQuery):
 
     parts = call.data.split(":")
     product_id = int(parts[1])
-    quantity = max(1, min(int(parts[2]) if len(parts) > 2 else 1, 13))
+    quantity = max(1, int(parts[2]) if len(parts) > 2 else 1)
 
     async with SessionLocal() as session:
         await repo.upsert_user(session, call.from_user)
