@@ -217,7 +217,7 @@ async def cancel_open_orders_for_user(session: AsyncSession, user_id: int) -> li
         .where(
             Order.user_id == user_id,
             Order.delivered.is_(False),
-            Order.status.in_(["pending", "awaiting_proof", "waiting_payment"]),
+            Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20"]),
         )
         .with_for_update(skip_locked=True)
     )
@@ -237,7 +237,7 @@ async def cancel_order(session: AsyncSession, order_id: int, user_id: int | None
     order = (await session.execute(stmt)).scalar_one_or_none()
     if not order or (user_id is not None and order.user_id != user_id):
         return None
-    if order.status not in {"pending", "awaiting_proof", "waiting_payment"}:
+    if order.status not in {"pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20"}:
         return order
     order.status = "cancelled"
     order.expires_at = None
@@ -295,7 +295,7 @@ async def expire_unpaid_orders(session: AsyncSession) -> list[Order]:
         Order.expires_at.is_not(None),
         Order.expires_at <= now,
         Order.delivered.is_(False),
-        Order.status.in_(["pending", "awaiting_proof", "waiting_payment"]),
+        Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20"]),
     ).with_for_update(skip_locked=True)
     orders = list((await session.execute(stmt)).scalars().all())
     for order in orders:

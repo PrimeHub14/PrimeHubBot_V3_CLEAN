@@ -90,7 +90,6 @@ async def verify_cycle(bot: Bot) -> None:
         pending = list((await session.execute(stmt)).scalars().all())
 
     if not pending:
-        await expire_old_orders(now)
         return
 
     earliest = min(order.created_at for order in pending)
@@ -198,7 +197,6 @@ async def verify_cycle(bot: Bot) -> None:
                     except Exception:
                         pass
 
-    await expire_old_orders(now)
 
 
 async def expire_old_orders(now: datetime) -> None:

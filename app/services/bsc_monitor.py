@@ -119,7 +119,6 @@ async def verify_cycle(bot: Bot) -> None:
 
     now = datetime.now(timezone.utc)
     if not await pending_orders_exist(now):
-        await expire_old_orders(now)
         return
 
     latest = await latest_block_number()
@@ -133,7 +132,6 @@ async def verify_cycle(bot: Bot) -> None:
         from_block = _last_scanned_block + 1
 
     if from_block > confirmed_to:
-        await expire_old_orders(now)
         return
 
     # NodeReal allows large eth_getLogs ranges, but chunking keeps each request modest.
@@ -234,7 +232,6 @@ async def verify_cycle(bot: Bot) -> None:
         _last_scanned_block = chunk_end
         cursor = chunk_end + 1
 
-    await expire_old_orders(now)
 
 
 async def expire_old_orders(now: datetime) -> None:
