@@ -70,14 +70,20 @@ def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarku
     if available_stock > 0:
         rows = [
             [InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")],
-            [InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}")],
+            [
+                InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}"),
+                InlineKeyboardButton(text="⭐ Reviews", callback_data="reviews"),
+            ],
             [InlineKeyboardButton(text="🔔 Restock Alerts", callback_data=f"stocknotify:{product_id}")],
             [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
         ]
     else:
         rows = [
             [InlineKeyboardButton(text="❌ Out of Stock", callback_data="outofstock")],
-            [InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}")],
+            [
+                InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}"),
+                InlineKeyboardButton(text="⭐ Reviews", callback_data="reviews"),
+            ],
             [InlineKeyboardButton(text="🔔 Notify Me When Restocked", callback_data=f"stocknotify:{product_id}")],
             [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
         ]
@@ -137,6 +143,23 @@ def crypto_waiting_kb(order_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💬 Payment Help", callback_data="help:home")],
         ]
     )
+
+
+
+
+def order_history_kb(orders) -> InlineKeyboardMarkup:
+    rows = []
+    for order in orders:
+        product_name = order.product.name if getattr(order, "product", None) else f"Product {order.product_id}"
+        price = float(order.amount)
+        rows.append([
+            InlineKeyboardButton(
+                text=f"📦 #{order.id} · {product_name[:28]} · ${price:.2f}",
+                callback_data=f"orderhistory:{order.id}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="🏠 Home", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 

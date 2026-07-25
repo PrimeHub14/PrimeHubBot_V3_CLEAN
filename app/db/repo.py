@@ -434,12 +434,28 @@ async def recent_orders(session: AsyncSession, limit: int = 10) -> list[Order]:
 
 
 async def user_orders(session: AsyncSession, user_id: int, limit: int = 10) -> list[Order]:
+    """Customer purchase history: delivered/completed purchases only."""
     stmt = (
         select(Order)
         .options(selectinload(Order.product))
-        .where(Order.user_id == user_id)
+        .where(
+            Order.user_id == user_id,
+            or_(Order.delivered.is_(True), Order.status.in_(["delivered", "completed"])),
+        )
         .order_by(Order.id.desc())
         .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def delivered_items_for_order(session: AsyncSession, order_id: int) -> list[StockItem]:
+    stmt = (
+        select(StockItem)
+        .where(
+            StockItem.reserved_order_id == order_id,
+            StockItem.status == "delivered",
+        )
+        .order_by(StockItem.id.asc())
     )
     return list((await session.execute(stmt)).scalars().all())
 

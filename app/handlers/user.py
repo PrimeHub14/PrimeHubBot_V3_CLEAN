@@ -1,3 +1,4 @@
+from html import escape
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -16,6 +17,7 @@ from app.keyboards import (
     payment_info_kb,
     manual_payment_kb,
     order_again_kb,
+    order_history_kb,
     admin_review_kb,
 )
 from app.services.nowpayments import NowPayments
@@ -154,27 +156,65 @@ async def reviews(call: CallbackQuery):
 @router.callback_query(F.data == "myorders")
 async def my_orders(call: CallbackQuery):
     async with SessionLocal() as session:
-        orders = await repo.user_orders(session, call.from_user.id)
+        orders = await repo.user_orders(session, call.from_user.id, limit=20)
 
     if not orders:
-        await call.message.answer("📦 You have no orders yet. Start shopping and your orders will appear here.")
+        await call.message.answer(
+            "📦 <b>Order History</b>\n\n"
+            "You do not have any completed purchases yet.",
+            parse_mode="HTML",
+        )
     else:
-        lines = ["📦 <b>My Recent Orders</b>"]
-        for order in orders:
-            product_name = (
-                order.product.name
-                if getattr(order, "product", None)
-                else f"Product {order.product_id}"
-            )
-            lines.append(
-                "\n"
-                f"<b>#{order.id}</b> · {product_name}\n"
-                f"Qty: {order.quantity or 1} · Status: {order.status}\n"
-                f"Total: ${float(order.amount):.2f}\n"
-                f"Date: {format_order_time(order.created_at)}"
-            )
-        await call.message.answer("\n".join(lines), parse_mode="HTML")
+        await call.message.answer(
+            "📦 <b>Order History</b>\n\nSelect a completed order to view full details:",
+            reply_markup=order_history_kb(orders),
+            parse_mode="HTML",
+        )
+    await call.answer()
 
+
+@router.callback_query(F.data.startswith("orderhistory:"))
+async def order_history_detail(call: CallbackQuery):
+    order_id = int(call.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order or order.user_id != call.from_user.id or not (
+            order.delivered or order.status in {"delivered", "completed"}
+        ):
+            await call.answer("Completed order not found.", show_alert=True)
+            return
+        items = await repo.delivered_items_for_order(session, order.id)
+
+    product_name = order.product.name if order.product else f"Product {order.product_id}"
+    lines = [
+        "📋 <b>ORDER DETAILS</b>",
+        "━━━━━━━━━━━━━━━━━━",
+        f"🧾 Order ID: <b>#{order.id}</b>",
+        f"📦 Product: <b>{escape(product_name)}</b>",
+        f"🔢 Quantity: <b>{order.quantity or 1}</b>",
+        f"💵 Amount: <b>${float(order.amount):.2f}</b>",
+        "✅ Status: <b>COMPLETED</b>",
+        f"🕒 Time: <b>{format_order_time(order.created_at)}</b>",
+    ]
+
+    if items:
+        lines += ["", "🔐 <b>Delivered Items</b>"]
+        for index, item in enumerate(items, start=1):
+            if item.is_file_id:
+                lines.append(f"\n📎 Item {index}: Delivered file")
+            else:
+                lines.append(
+                    f"\n<b>Item {index}</b>\n"
+                    f"<code>{escape(item.content)}</code>"
+                )
+    elif getattr(order.product, "delivery_mode", "") == "manual":
+        lines += ["", "👤 <b>Manual delivery order</b>"]
+
+    await call.message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=order_history_kb([order]),
+    )
     await call.answer()
 
 

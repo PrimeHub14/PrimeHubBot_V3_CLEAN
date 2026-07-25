@@ -108,36 +108,21 @@ async def orders_command(message: Message, state: FSMContext) -> None:
     await state.clear()
     await _register_user(message)
     async with SessionLocal() as session:
-        orders = await repo.user_orders(session, message.from_user.id)
+        orders = await repo.user_orders(session, message.from_user.id, limit=20)
 
     if not orders:
         await message.answer(
-            "📦 You have no orders yet. Start shopping and your orders will appear here.",
+            "📦 <b>Order History</b>\n\nYou do not have any completed purchases yet.",
             reply_markup=main_menu_kb(),
+            parse_mode="HTML",
         )
         return
 
-    lines = ["📦 <b>My Recent Orders</b>"]
-    for order in orders:
-        product_name = (
-            order.product.name
-            if getattr(order, "product", None)
-            else f"Product {order.product_id}"
-        )
-        created_at = (
-            order.created_at.strftime("%d %b %Y, %H:%M UTC")
-            if order.created_at
-            else "Unknown"
-        )
-        lines.append(
-            "\n"
-            f"<b>#{order.id}</b> · {product_name}\n"
-            f"Qty: {order.quantity or 1} · Status: {order.status}\n"
-            f"Total: ${float(order.amount):.2f}\n"
-            f"Date: {created_at}"
-        )
-
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    await message.answer(
+        "📦 <b>Order History</b>\n\nSelect a completed order to view full details:",
+        reply_markup=order_history_kb(orders),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("profile"))
