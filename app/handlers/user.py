@@ -243,6 +243,54 @@ async def out_of_stock(call: CallbackQuery):
     await call.answer("This product is currently out of stock. Use Restock Alerts to be notified.", show_alert=True)
 
 
+async def cleanup_previous_checkout_ui(call_or_message, state: FSMContext) -> None:
+    """Delete stale checkout/payment UI and cancel old unpaid checkout records."""
+    bot = call_or_message.bot
+    user_id = call_or_message.from_user.id
+
+    data = await state.get_data()
+
+    # Delete the previous quantity/payment menu if one was remembered.
+    old_chat_id = data.get("checkout_menu_chat_id")
+    old_message_id = data.get("checkout_menu_message_id")
+    if old_chat_id and old_message_id:
+        try:
+            await bot.delete_message(
+                chat_id=int(old_chat_id),
+                message_id=int(old_message_id),
+            )
+        except Exception:
+            pass
+
+    # Cancel stale unpaid checkout records and remove their payment QR/detail cards.
+    async with SessionLocal() as session:
+        old_orders = await repo.cancel_open_checkout_orders_for_user(session, user_id)
+
+    for old_order in old_orders:
+        payment_chat_id = getattr(old_order, "payment_message_chat_id", None)
+        payment_message_id = getattr(old_order, "payment_message_id", None)
+        if payment_chat_id and payment_message_id:
+            try:
+                await bot.delete_message(
+                    chat_id=int(payment_chat_id),
+                    message_id=int(payment_message_id),
+                )
+            except Exception:
+                pass
+
+    await state.update_data(
+        checkout_menu_chat_id=None,
+        checkout_menu_message_id=None,
+    )
+
+
+async def remember_checkout_menu(state: FSMContext, message: Message) -> None:
+    await state.update_data(
+        checkout_menu_chat_id=message.chat.id,
+        checkout_menu_message_id=message.message_id,
+    )
+
+
 @router.callback_query(F.data.startswith("quantity:"))
 async def choose_quantity(call: CallbackQuery, state: FSMContext):
     _, product_id_raw, quantity_raw = call.data.split(":")
