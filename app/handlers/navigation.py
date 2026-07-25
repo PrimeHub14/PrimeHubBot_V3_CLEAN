@@ -112,7 +112,7 @@ async def wallet_command(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(Command("orders"))
+@router.message(Command("order", "orders"))
 async def orders_command(message: Message, state: FSMContext) -> None:
     await state.clear()
     await _register_user(message)

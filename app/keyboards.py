@@ -11,7 +11,7 @@ def main_menu_kb(lang: str = "en") -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🛍 Shop", callback_data="shop")],
         [InlineKeyboardButton(text="💰 Wallet", callback_data="wallet:home")],
         [
-            InlineKeyboardButton(text="📦 Orders", callback_data="myorders"),
+            InlineKeyboardButton(text="📦 Order History", callback_data="myorders"),
             InlineKeyboardButton(text="⭐ Reviews", callback_data="reviews"),
         ],
         [

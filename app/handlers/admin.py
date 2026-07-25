@@ -98,7 +98,7 @@ async def admin(message: Message):
         "/moveproduct PRODUCT_ID - Move product to category\n"
         "/deletecategory - Remove an empty category\n"
         "/delproduct PRODUCT_ID - Disable product\n"
-        "/orders - Recent orders\n"
+        "/adminorders - Recent orders\n"
         "/stats - Store stats\n"
         "/reports - Sales reports by date\n"
         "/solddata - Exact sold-item ledger & CSV exports\n"
@@ -580,7 +580,7 @@ async def del_product(message: Message):
     await message.answer("✅ Disabled." if ok else "Product not found.")
 
 
-@router.message(Command("orders"))
+@router.message(Command("adminorders"))
 async def orders(message: Message):
     if not admin_only(message):
         return
