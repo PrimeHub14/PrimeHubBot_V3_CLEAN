@@ -60,13 +60,13 @@ def welcome_text(first_name: str | None = None) -> str:
     name = first_name or "friend"
     return (
         f"👋 Welcome, <b>{name}</b>!\n\n"
-        f"🛍️ <b>{settings.STORE_NAME.replace('PrimeHub', 'Prime Hub')}</b>\n"
-        f"Premium digital products with fast delivery.\n\n"
-        f"✅ Automatic crypto confirmation\n"
-        f"✅ Manual Wallet, Binance & UPI approval\n"
-        f"✅ Instant delivery after approval\n"
-        f"✅ Order history and support\n\n"
-        f"Choose an option below 👇"
+        "🛍 <b>Prime Hub Store</b>\n"
+        "Premium digital products with fast delivery.\n\n"
+        "✅ Automatic crypto confirmation\n"
+        "✅ Manual Wallet, Binance & UPI approval\n"
+        "✅ Instant delivery after approval\n"
+        "✅ Order history and support\n\n"
+        "Choose an option below 👇"
     )
 
 

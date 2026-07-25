@@ -40,25 +40,34 @@ async def _register_user(message: Message) -> None:
 async def _show_home(message: Message, state: FSMContext) -> None:
     await state.clear()
     await _register_user(message)
-    async with SessionLocal() as session:
-        user = await session.get(__import__("app.db.models", fromlist=["User"]).User, message.from_user.id)
-        lang = (user.language or "en") if user else "en"
-        metrics = await repo.user_profile_metrics(session, message.from_user.id)
+
+    first_name = message.from_user.first_name if message.from_user else None
+    name = first_name or "friend"
+
     text = (
-        f"💎 <b>{tr(lang, 'store')}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"👋 {tr(lang, 'welcome')}, <b>{escape(message.from_user.first_name or 'friend')}</b>\n"
-        f"💰 Wallet: <b>${metrics['wallet']:.2f}</b> · 💎 {escape(metrics['vip'])}\n"
-        f"🏆 {metrics['points']} pts · 📦 {metrics['orders']} orders\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "⚡ Fast digital delivery · 🔒 Secure checkout\n"
-        "🎁 Rewards · 🔔 Restock alerts · 🛟 Support\n\n"
+        f"👋 Welcome, <b>{escape(name)}</b>!\n\n"
+        "🛍 <b>Prime Hub Store</b>\n"
+        "Premium digital products with fast delivery.\n\n"
+        "✅ Automatic crypto confirmation\n"
+        "✅ Manual Wallet, Binance & UPI approval\n"
+        "✅ Instant delivery after approval\n"
+        "✅ Order history and support\n\n"
         "Choose an option below 👇"
     )
+
     if settings.WELCOME_IMAGE_FILE_ID:
-        await message.answer_photo(settings.WELCOME_IMAGE_FILE_ID, caption=text, reply_markup=main_menu_kb(lang), parse_mode="HTML")
+        await message.answer_photo(
+            settings.WELCOME_IMAGE_FILE_ID,
+            caption=text,
+            reply_markup=main_menu_kb(),
+            parse_mode="HTML",
+        )
     else:
-        await message.answer(text, reply_markup=main_menu_kb(lang), parse_mode="HTML")
+        await message.answer(
+            text,
+            reply_markup=main_menu_kb(),
+            parse_mode="HTML",
+        )
 
 
 @router.message(CommandStart())

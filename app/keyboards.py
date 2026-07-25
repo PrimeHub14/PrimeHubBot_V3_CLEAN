@@ -6,11 +6,12 @@ from app.db.models import Product
 
 
 def main_menu_kb(lang: str = "en") -> InlineKeyboardMarkup:
+    """Prime Hub customer home menu — locked to the preferred compact layout."""
     rows = [
-        [InlineKeyboardButton(text=f"🛍 {tr(lang, 'shop')}", callback_data="shop")],
-        [InlineKeyboardButton(text=f"💰 {tr(lang, 'wallet')}", callback_data="wallet:home")],
+        [InlineKeyboardButton(text="🛍 Shop", callback_data="shop")],
+        [InlineKeyboardButton(text="💰 Wallet", callback_data="wallet:home")],
         [
-            InlineKeyboardButton(text=f"📦 {tr(lang, 'orders')}", callback_data="myorders"),
+            InlineKeyboardButton(text="📦 Orders", callback_data="myorders"),
             InlineKeyboardButton(text="⭐ Reviews", callback_data="reviews"),
         ],
         [
@@ -18,12 +19,10 @@ def main_menu_kb(lang: str = "en") -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏆 Loyalty", callback_data="growth:loyalty"),
         ],
         [
-            InlineKeyboardButton(text=f"🌍 {tr(lang, 'language')}", callback_data="v5:language"),
-            InlineKeyboardButton(text=f"🛟 {tr(lang, 'support')}", callback_data="help:home"),
+            InlineKeyboardButton(text="🌍 Language", callback_data="v5:language"),
+            InlineKeyboardButton(text="🛟 Support", callback_data="help:home"),
         ],
     ]
-    if settings.community_link:
-        rows.append([InlineKeyboardButton(text=f"📢 {tr(lang, 'updates')}", url=settings.community_link)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
