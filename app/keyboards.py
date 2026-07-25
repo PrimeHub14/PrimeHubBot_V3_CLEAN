@@ -7,17 +7,20 @@ from app.db.models import Product
 
 def main_menu_kb(lang: str = "en") -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"🛍 {tr(lang, 'shop')}", callback_data="shop"),
-         InlineKeyboardButton(text=f"🔎 {tr(lang, 'search')}", callback_data="v5:search")],
-        [InlineKeyboardButton(text=f"💰 {tr(lang, 'wallet')}", callback_data="wallet:home"),
-         InlineKeyboardButton(text=f"📦 {tr(lang, 'orders')}", callback_data="myorders")],
-        [InlineKeyboardButton(text=f"🎁 {tr(lang, 'rewards')}", callback_data="v5:rewards"),
-         InlineKeyboardButton(text=f"💎 {tr(lang, 'vip')}", callback_data="v5:vip")],
-        [InlineKeyboardButton(text=f"❤️ {tr(lang, 'wishlist')}", callback_data="v5:wishlist"),
-         InlineKeyboardButton(text=f"🎯 {tr(lang, 'recommend')}", callback_data="growth:recommend")],
-        [InlineKeyboardButton(text=f"👤 {tr(lang, 'profile')}", callback_data="v5:profile"),
-         InlineKeyboardButton(text=f"🛟 {tr(lang, 'support')}", callback_data="help:home")],
-        [InlineKeyboardButton(text=f"🌍 {tr(lang, 'language')}", callback_data="v5:language")],
+        [InlineKeyboardButton(text=f"🛍 {tr(lang, 'shop')}", callback_data="shop")],
+        [InlineKeyboardButton(text=f"💰 {tr(lang, 'wallet')}", callback_data="wallet:home")],
+        [
+            InlineKeyboardButton(text=f"📦 {tr(lang, 'orders')}", callback_data="myorders"),
+            InlineKeyboardButton(text="⭐ Reviews", callback_data="reviews"),
+        ],
+        [
+            InlineKeyboardButton(text="🎁 Referral", callback_data="growth:referral"),
+            InlineKeyboardButton(text="🏆 Loyalty", callback_data="growth:loyalty"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🌍 {tr(lang, 'language')}", callback_data="v5:language"),
+            InlineKeyboardButton(text=f"🛟 {tr(lang, 'support')}", callback_data="help:home"),
+        ],
     ]
     if settings.community_link:
         rows.append([InlineKeyboardButton(text=f"📢 {tr(lang, 'updates')}", url=settings.community_link)])
@@ -67,16 +70,14 @@ def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarku
     if available_stock > 0:
         rows = [
             [InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")],
-            [InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}"),
-             InlineKeyboardButton(text="⭐ Reviews", callback_data=f"v5:reviews:{product_id}")],
+            [InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}")],
             [InlineKeyboardButton(text="🔔 Restock Alerts", callback_data=f"stocknotify:{product_id}")],
             [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
         ]
     else:
         rows = [
             [InlineKeyboardButton(text="❌ Out of Stock", callback_data="outofstock")],
-            [InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}"),
-             InlineKeyboardButton(text="⭐ Reviews", callback_data=f"v5:reviews:{product_id}")],
+            [InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}")],
             [InlineKeyboardButton(text="🔔 Notify Me When Restocked", callback_data=f"stocknotify:{product_id}")],
             [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
         ]
@@ -136,6 +137,14 @@ def crypto_waiting_kb(order_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💬 Payment Help", callback_data="help:home")],
         ]
     )
+
+
+
+def order_again_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛍 Shop / Order Again", callback_data="shop")],
+        [InlineKeyboardButton(text="🏠 Home", callback_data="home")],
+    ])
 
 
 def admin_review_kb(order_id: int) -> InlineKeyboardMarkup:

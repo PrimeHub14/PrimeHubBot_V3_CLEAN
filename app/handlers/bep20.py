@@ -8,6 +8,7 @@ from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.services.qr import make_address_qr
+from app.services.payment_messages import remove_previous_payment_message
 from app.keyboards import crypto_waiting_kb
 
 router = Router()
@@ -84,6 +85,8 @@ async def direct_bep(call: CallbackQuery):
         "⚠️ Use <b>USDT BEP20 / BNB Smart Chain only</b> and send the "
         "<b>exact amount shown above</b>. The small decimal suffix identifies your order."
     )
+
+    await remove_previous_payment_message(call.bot, order)
 
     sent = await call.message.answer_photo(
         make_address_qr(settings.BEP20_RECEIVE_ADDRESS),

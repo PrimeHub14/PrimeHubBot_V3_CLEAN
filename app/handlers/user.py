@@ -15,9 +15,11 @@ from app.keyboards import (
     payment_methods_kb,
     payment_info_kb,
     manual_payment_kb,
+    order_again_kb,
     admin_review_kb,
 )
 from app.services.nowpayments import NowPayments
+from app.services.payment_messages import remove_previous_payment_message
 from app.utils.qr import qr_file
 from urllib.parse import urlencode
 
@@ -424,6 +426,8 @@ async def manual_payment(call: CallbackQuery):
             await call.answer(str(exc), show_alert=True)
             return
 
+    await remove_previous_payment_message(call.bot, order)
+
     total = float(order.amount)
     label = MANUAL_LABELS[method]
     if method == "wallet":
@@ -504,13 +508,26 @@ async def cancel_order_callback(call: CallbackQuery, state: FSMContext):
     if order.status != "cancelled":
         await call.answer(f"Order is already {order.status}.", show_alert=True)
         return
+
     await state.clear()
+
+    # Remove the old QR/payment card so the customer cannot accidentally use it.
     try:
-        await call.message.edit_reply_markup(reply_markup=None)
+        await call.message.delete()
     except Exception:
-        pass
-    await call.message.answer(
-        f"❌ Order <code>#{order.id}</code> cancelled. No inventory was deducted.",
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+    await call.bot.send_message(
+        call.from_user.id,
+        (
+            f"❌ Order <code>#{order.id}</code> cancelled.\n"
+            "No inventory was deducted.\n\n"
+            "Want to order again? Open the shop and choose the product you need."
+        ),
+        reply_markup=order_again_kb(),
         parse_mode="HTML",
     )
     await call.answer("Order cancelled")
@@ -578,12 +595,15 @@ async def paycoin(call: CallbackQuery):
         "\n⚠️ Send only the selected coin/network.\n"
         "✅ Delivery is automatic after provider confirmation."
     )
-    await call.message.answer_photo(
+    await remove_previous_payment_message(call.bot, order)
+    sent = await call.message.answer_photo(
         qr_file(pay_address, f"order-{order.id}-qr.png"),
         caption=caption,
         reply_markup=payment_info_kb(payment_url),
         parse_mode="HTML",
     )
+    async with SessionLocal() as session:
+        await repo.set_order_payment_message(session, order.id, sent.chat.id, sent.message_id, caption)
     await call.answer()
 
 

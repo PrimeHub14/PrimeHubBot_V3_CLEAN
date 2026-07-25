@@ -247,11 +247,11 @@ async def cancel_order(session: AsyncSession, order_id: int, user_id: int | None
 
 async def create_order(session: AsyncSession, user_id: int, product: Product, currency: str,
                        payment_method: str | None = None, quantity: int = 1) -> Order:
-    """Create an unpaid order without reserving inventory.
+    """Create or reuse one unpaid checkout order.
 
-    Live inventory is claimed atomically only after payment is confirmed.
+    Changing payment method reuses the SAME order instead of creating a second
+    order. Inventory is still never reserved at checkout.
     """
-    await cancel_open_orders_for_user(session, user_id)
     quantity = max(1, int(quantity))
     if not product.stock_enabled:
         raise ValueError("This product is not configured for stock-controlled delivery")
@@ -260,10 +260,56 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
     if available < quantity:
         raise ValueError(f"Only {available} item(s) are currently available. Please choose a lower quantity.")
 
+    open_statuses = ["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20"]
+    stmt = (
+        select(Order)
+        .where(
+            Order.user_id == user_id,
+            Order.delivered.is_(False),
+            Order.status.in_(open_statuses),
+        )
+        .order_by(Order.id.desc())
+        .with_for_update()
+    )
+    open_orders = list((await session.execute(stmt)).scalars().all())
+
+    reusable = next(
+        (
+            order for order in open_orders
+            if order.product_id == product.id and int(order.quantity or 1) == quantity
+        ),
+        None,
+    )
+
+    # Cancel any other abandoned checkout silently. There is still only one live
+    # checkout for this customer, but switching payment method does not create
+    # another order.
+    for old in open_orders:
+        if reusable and old.id == reusable.id:
+            continue
+        old.status = "cancelled"
+        old.expires_at = None
+
+    amount = (await effective_price(session, user_id, product))[0] * quantity
+
+    if reusable:
+        reusable.currency = currency
+        reusable.payment_method = payment_method
+        reusable.amount = amount
+        reusable.status = "pending"
+        reusable.expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        reusable.provider_payment_id = None
+        reusable.invoice_url = None
+        reusable.payment_proof_type = None
+        reusable.payment_proof_value = None
+        await session.commit()
+        await session.refresh(reusable)
+        return reusable
+
     order = Order(
         user_id=user_id,
         product_id=product.id,
-        amount=(await effective_price(session, user_id, product))[0] * quantity,
+        amount=amount,
         quantity=quantity,
         currency=currency,
         payment_method=payment_method,

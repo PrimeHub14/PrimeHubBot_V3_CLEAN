@@ -5,6 +5,7 @@ from aiogram import Bot
 
 from app.db.session import SessionLocal
 from app.db import repo
+from app.keyboards import order_again_kb
 
 
 def payment_window_minutes(order) -> int:
@@ -41,11 +42,11 @@ async def order_expiry_worker(bot: Bot) -> None:
                 notice = (
                     f"⌛ Order #{order.id} expired after its {minutes}-minute "
                     f"{method} payment window. No inventory was deducted. "
-                    "Please create a new order."
+                    "Would you like to order again?"
                 )
 
                 try:
-                    await bot.send_message(order.user_id, notice)
+                    await bot.send_message(order.user_id, notice, reply_markup=order_again_kb())
 
                     if (
                         order.payment_message_chat_id
@@ -64,7 +65,7 @@ async def order_expiry_worker(bot: Bot) -> None:
                                 message_id=order.payment_message_id,
                                 caption=text,
                                 parse_mode="HTML",
-                                reply_markup=None,
+                                reply_markup=order_again_kb(),
                             )
                         except Exception:
                             try:
@@ -73,7 +74,7 @@ async def order_expiry_worker(bot: Bot) -> None:
                                     message_id=order.payment_message_id,
                                     text=text,
                                     parse_mode="HTML",
-                                    reply_markup=None,
+                                    reply_markup=order_again_kb(),
                                 )
                             except Exception:
                                 pass

@@ -18,6 +18,7 @@ from app.keyboards import (
 from app.services.delivery import deliver_order
 from app.services.nowpayments import NowPayments
 from app.services.wallet import credit_wallet, debit_wallet
+from app.services.payment_messages import remove_previous_payment_message
 from app.utils.qr import qr_file
 from app.utils.security import is_admin
 
@@ -256,6 +257,7 @@ async def wallet_pay(call: CallbackQuery):
             order = await repo.create_order(session, call.from_user.id, product, settings.CURRENCY, "internal_wallet", quantity)
         except ValueError as exc:
             await call.answer(str(exc), show_alert=True); return
+        await remove_previous_payment_message(call.bot, order)
         if not await debit_wallet(session, call.from_user.id, total):
             await call.answer("Insufficient wallet balance", show_alert=True); return
         order.status = "paid"
