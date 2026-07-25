@@ -8,7 +8,7 @@ from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.i18n import tr
-from app.keyboards import categories_kb, main_menu_kb, wallet_home_kb
+from app.keyboards import order_history_kb, categories_kb, main_menu_kb, wallet_home_kb
 
 router = Router()
 
