@@ -231,6 +231,26 @@ async def cancel_open_orders_for_user(session: AsyncSession, user_id: int) -> li
     return cancelled_ids
 
 
+async def cancel_open_checkout_orders_for_user(session: AsyncSession, user_id: int) -> list[Order]:
+    """Cancel all unpaid checkout orders and return them for UI cleanup."""
+    stmt = (
+        select(Order)
+        .where(
+            Order.user_id == user_id,
+            Order.delivered.is_(False),
+            Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20"]),
+        )
+        .order_by(Order.id.desc())
+        .with_for_update(skip_locked=True)
+    )
+    orders = list((await session.execute(stmt)).scalars().all())
+    for order in orders:
+        order.status = "cancelled"
+        order.expires_at = None
+    await session.commit()
+    return orders
+
+
 async def cancel_order(session: AsyncSession, order_id: int, user_id: int | None = None) -> Order | None:
     """Cancel an unpaid order. No stock release is needed because stock is not held."""
     stmt = select(Order).where(Order.id == order_id).with_for_update()

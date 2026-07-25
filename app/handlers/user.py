@@ -244,7 +244,7 @@ async def out_of_stock(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("quantity:"))
-async def choose_quantity(call: CallbackQuery):
+async def choose_quantity(call: CallbackQuery, state: FSMContext):
     _, product_id_raw, quantity_raw = call.data.split(":")
     product_id = int(product_id_raw)
     quantity = max(1, int(quantity_raw))
@@ -260,6 +260,9 @@ async def choose_quantity(call: CallbackQuery):
     if quantity > available_stock:
         await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
         return
+
+    await cleanup_previous_checkout_ui(call, state)
+
     total = float(product.price) * quantity
     text = (
         f"🛒 <b>Select Quantity</b>\n\n"
@@ -288,6 +291,7 @@ async def ask_typed_quantity(call: CallbackQuery, state: FSMContext):
         await call.answer("This product is out of stock.", show_alert=True)
         return
 
+    await cleanup_previous_checkout_ui(call, state)
     await state.clear()
     await state.update_data(quantity_product_id=product_id)
     await state.set_state(QuantityInputState.waiting_quantity)
@@ -352,11 +356,12 @@ async def receive_typed_quantity(message: Message, state: FSMContext):
         f"Select the method you prefer 👇"
     )
 
-    await message.answer(
+    sent = await message.answer(
         text,
         reply_markup=payment_methods_kb(product.id, quantity),
         parse_mode="HTML",
     )
+    await remember_checkout_menu(state, sent)
 
 
 @router.callback_query(F.data == "qtynoop")
@@ -398,7 +403,7 @@ async def change_quantity(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("paymenu:"))
-async def payment_menu(call: CallbackQuery):
+async def payment_menu(call: CallbackQuery, state: FSMContext):
     parts = call.data.split(":")
     product_id = int(parts[1])
     quantity = max(1, int(parts[2]) if len(parts) > 2 else 1)
@@ -422,7 +427,29 @@ async def payment_menu(call: CallbackQuery):
         f"💵 Total: <b>${total:.2f}</b>\n\n"
         f"Select the method you prefer 👇"
     )
-    await call.message.answer(text, reply_markup=payment_methods_kb(product.id, quantity), parse_mode="HTML")
+    try:
+        await call.message.edit_text(
+            text,
+            reply_markup=payment_methods_kb(product.id, quantity),
+            parse_mode="HTML",
+        )
+        sent = call.message
+    except Exception:
+        data = await state.get_data()
+        old_chat = data.get("checkout_menu_chat_id")
+        old_message = data.get("checkout_menu_message_id")
+        if old_chat and old_message:
+            try:
+                await call.bot.delete_message(chat_id=int(old_chat), message_id=int(old_message))
+            except Exception:
+                pass
+        sent = await call.message.answer(
+            text,
+            reply_markup=payment_methods_kb(product.id, quantity),
+            parse_mode="HTML",
+        )
+
+    await remember_checkout_menu(state, sent)
     await call.answer()
 
 
