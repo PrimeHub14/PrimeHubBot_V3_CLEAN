@@ -21,6 +21,7 @@ from app.handlers import (
     sales_ledger,
     trc20,
     bep20,
+    binance_test,
     enterprise,
 )
 from app.webhook import create_app
@@ -48,6 +49,7 @@ async def start_bot() -> None:
     dp.include_router(sales_ledger.router)
     dp.include_router(enterprise.router)
     dp.include_router(admin.router)
+    dp.include_router(binance_test.router)
     dp.include_router(wallet.router)
 
     # Direct blockchain payment callbacks must be registered before the general user router.

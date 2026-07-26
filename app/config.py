@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Manual payment destinations
     WALLET_ADDRESS: str = ""
     BINANCE_PAY_ID: str = ""
+    BINANCE_API_KEY: str = ""
+    BINANCE_API_SECRET: str = ""
+    BINANCE_API_BASE_URL: str = "https://api.binance.com"
     UPI_ID: str = ""
     UPI_NAME: str = "Prime Hub"
     UPI_INR_PER_USD: float = 86.5
