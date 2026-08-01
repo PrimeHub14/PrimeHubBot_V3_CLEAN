@@ -21,6 +21,7 @@ from app.keyboards import (
     admin_review_kb,
 )
 from app.services.nowpayments import NowPayments
+from app.services.loot_paglu import live_stock, is_paglu_product
 from app.services.payment_messages import remove_previous_payment_message
 from app.utils.qr import qr_file
 from urllib.parse import urlencode
@@ -39,6 +40,20 @@ PAYMENT_LABELS = {
     "usdttrc20": "⚪ USDT (TRC20)",
     "usdtbep20": "⚪ USDT (BEP20)",
 }
+
+
+async def product_available_stock(session, product) -> int:
+    if not product:
+        return 0
+    local = await repo.available_stock_count(session, product.id)
+    return await live_stock(product.id, local)
+
+
+async def product_stock_map(session, products) -> dict[int, int]:
+    result: dict[int, int] = {}
+    for product in products:
+        result[product.id] = await product_available_stock(session, product)
+    return result
 
 def format_order_time(value) -> str:
     if not value:
@@ -107,6 +122,13 @@ async def shop(call: CallbackQuery):
     async with SessionLocal() as session:
         categories = await repo.list_categories(session)
         stock_totals, all_stock = await repo.category_stock_totals(session)
+        supplier_product = await repo.get_product(session, settings.LOOTPAGLU_PRODUCT_ID) if settings.LOOTPAGLU_PRODUCT_ID else None
+        if supplier_product and supplier_product.active and is_paglu_product(supplier_product.id):
+            local_supplier_stock = await repo.available_stock_count(session, supplier_product.id)
+            api_supplier_stock = await product_available_stock(session, supplier_product)
+            delta = api_supplier_stock - local_supplier_stock
+            stock_totals[supplier_product.category] = max(0, int(stock_totals.get(supplier_product.category, 0)) + delta)
+            all_stock = max(0, int(all_stock) + delta)
     if not categories:
         await call.message.answer("No products are available yet.")
     else:
@@ -122,7 +144,7 @@ async def shop(call: CallbackQuery):
 async def products_cmd(message: Message):
     async with SessionLocal() as session:
         products = await repo.list_products(session)
-        stock_counts = {p.id: await repo.available_stock_count(session, p.id) for p in products}
+        stock_counts = await product_stock_map(session, products)
     if not products:
         await message.answer("No products are available yet.")
         return
@@ -139,7 +161,7 @@ async def category_products(call: CallbackQuery):
         else:
             products = await repo.list_products_by_category(session, category)
             title = f"📂 {category}"
-        stock_counts = {p.id: await repo.available_stock_count(session, p.id) for p in products}
+        stock_counts = await product_stock_map(session, products)
     if not products:
         await call.message.answer("No products in this category yet.")
     else:
@@ -207,6 +229,17 @@ async def order_history_detail(call: CallbackQuery):
                     f"\n<b>Item {index}</b>\n"
                     f"<code>{escape(item.content)}</code>"
                 )
+    elif getattr(order, "supplier_delivery_record", None):
+        try:
+            import json
+            supplier_data = json.loads(order.supplier_delivery_record)
+            supplier_items = supplier_data.get("products") or []
+        except Exception:
+            supplier_items = []
+        if supplier_items:
+            lines += ["", "🔐 <b>Delivered Items</b>"]
+            for index, content in enumerate(supplier_items, start=1):
+                lines.append(f"\n<b>Item {index}</b>\n<code>{escape(str(content))}</code>")
     elif getattr(order.product, "delivery_mode", "") == "manual":
         lines += ["", "👤 <b>Manual delivery order</b>"]
 
@@ -223,7 +256,7 @@ async def show_product(call: CallbackQuery):
     product_id = int(call.data.split(":")[1])
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+        available_stock = await product_available_stock(session, product)
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
@@ -298,7 +331,7 @@ async def choose_quantity(call: CallbackQuery, state: FSMContext):
     quantity = max(1, int(quantity_raw))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+        available_stock = await product_available_stock(session, product)
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
@@ -330,7 +363,7 @@ async def ask_typed_quantity(call: CallbackQuery, state: FSMContext):
 
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+        available_stock = await product_available_stock(session, product)
 
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
@@ -373,7 +406,7 @@ async def receive_typed_quantity(message: Message, state: FSMContext):
 
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+        available_stock = await product_available_stock(session, product)
 
     if not product or not product.active:
         await state.clear()
@@ -424,7 +457,7 @@ async def change_quantity(call: CallbackQuery):
     quantity = max(1, int(quantity_raw) + int(delta_raw))
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+        available_stock = await product_available_stock(session, product)
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
@@ -457,7 +490,7 @@ async def payment_menu(call: CallbackQuery, state: FSMContext):
     quantity = max(1, int(parts[2]) if len(parts) > 2 else 1)
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+        available_stock = await product_available_stock(session, product)
     if not product or not product.active:
         await call.answer("Product not found.", show_alert=True)
         return
@@ -532,6 +565,13 @@ async def manual_payment(call: CallbackQuery):
             await repo.add_product_view(session, call.from_user.id, product_id)
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)
+            return
+        available_stock = await product_available_stock(session, product)
+        if available_stock <= 0:
+            await call.answer("This product is out of stock.", show_alert=True)
+            return
+        if quantity > available_stock:
+            await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
             return
         try:
             order = await repo.create_order(
@@ -664,6 +704,13 @@ async def paycoin(call: CallbackQuery):
         product = await repo.get_product(session, product_id)
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)
+            return
+        available_stock = await product_available_stock(session, product)
+        if available_stock <= 0:
+            await call.answer("This product is out of stock.", show_alert=True)
+            return
+        if quantity > available_stock:
+            await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
             return
         try:
             order = await repo.create_order(

@@ -80,6 +80,10 @@ class Order(Base):
     payment_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payment_message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivery_record: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supplier_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    supplier_order_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    supplier_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    supplier_delivery_record: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship()

@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.db import repo
 from app.db.session import SessionLocal
 from app.services.delivery import deliver_order
+from app.services.loot_paglu import LootPagluClient, LootPagluError, live_stock, is_paglu_product
 from app.services.announcements import notify_restock
 from app.utils.security import is_admin
 
@@ -313,13 +314,55 @@ async def add_is_file(message: Message, state: FSMContext):
     await message.answer(f"✅ Product added. ID: {product.id}\n\n⚠️ Stock is 0, so customers cannot order yet. Add stock with /addstock {product.id}")
 
 
+
+
+@router.message(Command("paglutest"))
+async def paglu_test(message: Message):
+    if not admin_only(message):
+        return
+    try:
+        client = LootPagluClient()
+        me = await client.me()
+        service = await client.service()
+    except LootPagluError as exc:
+        await message.answer(f"❌ Paglu API test failed:\n<code>{str(exc)}</code>", parse_mode="HTML")
+        return
+
+    if not service:
+        await message.answer("⚠️ Paglu API is reachable, but the configured Gemini service ID was not found.")
+        return
+
+    slots = service.get("slots") or []
+    slot_lines = []
+    for slot in slots:
+        min_q = slot.get("min")
+        max_q = slot.get("max")
+        range_text = f"{min_q}+" if max_q is None else f"{min_q}-{max_q}"
+        slot_lines.append(
+            f"• {range_text}: ₹{slot.get('upiPrice')} / {slot.get('cryptoPrice')} crypto"
+        )
+
+    await message.answer(
+        "✅ <b>Paglu API Connected</b>\n\n"
+        f"Service: <b>{service.get('name')}</b>\n"
+        f"Service ID: <code>{service.get('service_id')}</code>\n"
+        f"Live stock: <b>{service.get('available_stock', 0)}</b>\n"
+        f"INR wallet: <b>₹{me.get('wallet_inr', 0)}</b>\n"
+        f"Crypto wallet: <b>{me.get('wallet_crypto', 0)}</b>\n\n"
+        + ("Supplier tiers:\n" + "\n".join(slot_lines) if slot_lines else ""),
+        parse_mode="HTML",
+    )
+
 @router.message(Command("listproducts"))
 async def list_products(message: Message):
     if not admin_only(message):
         return
     async with SessionLocal() as session:
         products = await repo.list_products(session, only_active=False)
-        stock_counts = {p.id: await repo.available_stock_count(session, p.id) for p in products}
+        stock_counts = {}
+        for p in products:
+            local = await repo.available_stock_count(session, p.id)
+            stock_counts[p.id] = await live_stock(p.id, local)
     if not products:
         await message.answer("No products yet.")
         return
@@ -722,9 +765,11 @@ async def stock_status(message: Message):
                 return
             lines = ["📦 <b>All Product Stock</b>"]
             for product, available, reserved in rows:
+                available = await live_stock(product.id, available)
                 mode = getattr(product, "delivery_mode", "instant")
+                source = "Paglu API" if is_paglu_product(product.id) else mode
                 status = "✅" if available > 0 else "❌"
-                lines.append(f"{status} #{product.id} {product.name} | ${float(product.price):.2f} | Available: {available} | {mode}")
+                lines.append(f"{status} #{product.id} {product.name} | ${float(product.price):.2f} | Available: {available} | {source}")
             await message.answer("\n".join(lines), parse_mode="HTML")
             return
         if len(parts) != 2 or not parts[1].isdigit():
@@ -735,7 +780,8 @@ async def stock_status(message: Message):
         if not product:
             await message.answer("Product not found.")
             return
-        available = await repo.available_stock_count(session, product_id)
+        local_available = await repo.available_stock_count(session, product_id)
+        available = await live_stock(product_id, local_available)
     await message.answer(f"📦 <b>{product.name}</b>\nPrice: <b>${float(product.price):.2f}</b>\nAvailable stock: <b>{available}</b>\nDelivery: <b>{getattr(product, 'delivery_mode', 'instant')}</b>", parse_mode="HTML")
 
 

@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     REVIEWS_TEXT: str = "⭐ 4.9/5 Customer Rating\n✅ Instant delivery\n🛡 Friendly replacement support\n💬 Fast support"
     WELCOME_IMAGE_FILE_ID: str = ""
 
+    # Loot Paglu supplier integration (only the mapped Prime Hub product uses this)
+    LOOTPAGLU_API_KEY: str = ""
+    LOOTPAGLU_BASE_URL: str = "https://alkalize-antibody-agreeably.ngrok-free.dev"
+    LOOTPAGLU_PRODUCT_ID: int = 6
+    LOOTPAGLU_SERVICE_ID: str = "Paglu_1"
+    LOOTPAGLU_CURRENCY: str = "inr"
+    LOOTPAGLU_TIMEOUT_SECONDS: int = 20
+
     # Community updates and optional AI assistant
     UPDATE_CHAT_IDS: str = ""
     COMMUNITY_LINK: str = ""

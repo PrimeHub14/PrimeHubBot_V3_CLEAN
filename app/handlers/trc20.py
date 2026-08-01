@@ -9,6 +9,7 @@ from app.db import repo
 from app.db.session import SessionLocal
 from app.services.qr import make_address_qr
 from app.services.payment_messages import remove_previous_payment_message
+from app.services.loot_paglu import live_stock
 from app.keyboards import crypto_waiting_kb
 
 router = Router()
@@ -36,7 +37,8 @@ async def direct_trc(call: CallbackQuery):
     async with SessionLocal() as session:
         await repo.upsert_user(session, call.from_user)
         product = await repo.get_product(session, product_id)
-        available_stock = await repo.available_stock_count(session, product_id) if product else 0
+        local_stock = await repo.available_stock_count(session, product_id) if product else 0
+        available_stock = await live_stock(product_id, local_stock) if product else 0
 
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)

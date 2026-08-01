@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import uuid
 
+from app.config import settings
 from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription, Coupon, CouponRedemption, ReferralReward, LoyaltyTransaction, FlashSale, WishlistItem, ProductReview, ProductView, ScheduledBroadcast, AdminAuditLog
 
 MANUAL_METHODS = {"wallet", "binance", "upi"}
@@ -273,12 +274,20 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
     order. Inventory is still never reserved at checkout.
     """
     quantity = max(1, int(quantity))
-    if not product.stock_enabled:
+    is_supplier_product = bool(
+        settings.LOOTPAGLU_API_KEY
+        and settings.LOOTPAGLU_PRODUCT_ID > 0
+        and int(product.id) == int(settings.LOOTPAGLU_PRODUCT_ID)
+    )
+    if not product.stock_enabled and not is_supplier_product:
         raise ValueError("This product is not configured for stock-controlled delivery")
 
-    available = await available_stock_count(session, product.id)
-    if available < quantity:
-        raise ValueError(f"Only {available} item(s) are currently available. Please choose a lower quantity.")
+    # Supplier-backed Gemini uses live API stock. Handlers validate that live stock
+    # before checkout, so do not reject it because the local StockItem count is zero.
+    if not is_supplier_product:
+        available = await available_stock_count(session, product.id)
+        if available < quantity:
+            raise ValueError(f"Only {available} item(s) are currently available. Please choose a lower quantity.")
 
     open_statuses = ["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20"]
     stmt = (

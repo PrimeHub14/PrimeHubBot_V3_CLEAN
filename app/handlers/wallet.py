@@ -16,6 +16,7 @@ from app.keyboards import (
     wallet_topup_methods_kb,
 )
 from app.services.delivery import deliver_order
+from app.services.loot_paglu import live_stock
 from app.services.nowpayments import NowPayments
 from app.services.wallet import credit_wallet, debit_wallet
 from app.services.payment_messages import remove_previous_payment_message
@@ -248,6 +249,12 @@ async def wallet_pay(call: CallbackQuery):
         product = await repo.get_product(session, product_id)
         if not product or not product.active:
             await call.answer("Product not found", show_alert=True); return
+        local_stock = await repo.available_stock_count(session, product_id)
+        available_stock = await live_stock(product_id, local_stock)
+        if available_stock <= 0:
+            await call.answer("This product is out of stock.", show_alert=True); return
+        if quantity > available_stock:
+            await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True); return
         total = float(product.price) * quantity
         balance = await repo.wallet_balance(session, call.from_user.id)
         if balance < total:

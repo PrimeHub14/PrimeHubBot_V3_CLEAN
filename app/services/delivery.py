@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Order
 from app.config import settings
+from app.services.loot_paglu import LootPagluClient, LootPagluError, is_paglu_product
 from app.db.repo import (
     allocate_stock_items,
     complete_stock_items,
@@ -110,11 +111,104 @@ def make_bulk_csv(order: Order, text_items: list[tuple[int, str]]) -> BufferedIn
     return BufferedInputFile(payload, filename=f"PrimeHub_Order_{order.id}_Delivery.csv")
 
 
+async def _deliver_paglu_order(bot: Bot, session: AsyncSession, order: Order) -> None:
+    """Purchase the mapped Gemini product from Loot Paglu and deliver it safely.
+
+    Supplier purchase data is committed before Telegram delivery so a Telegram
+    send failure can be retried without buying the same supplier order twice.
+    """
+    import json
+
+    quantity = max(1, int(order.quantity or 1))
+
+    # If a previous attempt reached the supplier successfully, reuse the stored
+    # delivery items instead of purchasing again.
+    products = None
+    if order.supplier_status == "purchased" and order.supplier_delivery_record:
+        try:
+            saved = json.loads(order.supplier_delivery_record)
+            products = saved.get("products") if isinstance(saved, dict) else None
+        except Exception:
+            products = None
+
+    if not products:
+        # A network failure after the supplier accepted an order is ambiguous.
+        # Never automatically retry such an attempt because that could double-buy.
+        if order.supplier_status == "purchasing":
+            raise RuntimeError(
+                "Supplier purchase is in an uncertain state. Check Paglu order history before retrying."
+            )
+
+        client = LootPagluClient()
+        live = await client.stock()
+        if live < quantity:
+            raise RuntimeError(f"Not enough supplier stock is available. Only {live} item(s) remain.")
+
+        order.supplier_source = "loot_paglu"
+        order.supplier_status = "purchasing"
+        await session.commit()
+
+        try:
+            result = await client.order(quantity)
+        except LootPagluError as exc:
+            # Known HTTP/API failures mean the purchase was rejected and can be
+            # retried later after the problem is corrected. Connection errors are
+            # deliberately kept uncertain to avoid accidental duplicate purchases.
+            if "connection error" not in str(exc).lower():
+                order.supplier_status = "failed"
+                await session.commit()
+            raise RuntimeError(f"Paglu supplier order failed: {exc}") from exc
+
+        products = result.get("products") or []
+        order.supplier_order_id = str(result.get("order_id") or "") or None
+        order.supplier_delivery_record = json.dumps(result, ensure_ascii=False)
+        order.supplier_status = "purchased"
+        await session.commit()
+
+    if not isinstance(products, list) or len(products) < quantity:
+        raise RuntimeError("Supplier delivery record does not contain all purchased items.")
+
+    text_items = [(index, str(content)) for index, content in enumerate(products[:quantity], start=1)]
+    if len(text_items) >= 5:
+        await bot.send_message(
+            order.user_id,
+            delivery_header(order)
+            + "\n\n📁 <b>Bulk delivery ready</b>\n"
+            + f"Your {len(text_items)} Gemini delivery item(s) are attached below as <b>TXT</b> and <b>CSV</b> files."
+            + note_block(order)
+            + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.",
+            parse_mode="HTML",
+        )
+        await bot.send_document(order.user_id, make_bulk_txt(order, text_items), caption=f"📄 TXT delivery file — Order #{order.id}")
+        await bot.send_document(order.user_id, make_bulk_csv(order, text_items), caption=f"📊 CSV delivery file — Order #{order.id}")
+    else:
+        rendered = [
+            f"🎁 <b>Item {i} of {len(text_items)}</b>\n┌────────────────\n<code>{escape(content)}</code>\n└────────────────"
+            for i, content in text_items
+        ]
+        await bot.send_message(
+            order.user_id,
+            delivery_header(order)
+            + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+            + "\n\n".join(rendered)
+            + note_block(order)
+            + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.\n🛟 Need help? Open /help and select this order.",
+            parse_mode="HTML",
+        )
+
+    order.delivery_record = "\n\n".join(str(x) for x in products[:quantity])
+    await mark_delivered(session, order)
+
+
 async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
     if order.delivered:
         return
 
     product = order.product
+
+    if is_paglu_product(product.id):
+        await _deliver_paglu_order(bot, session, order)
+        return
 
     if getattr(product, "delivery_mode", "instant") == "manual":
         items = await allocate_stock_items(session, order)
