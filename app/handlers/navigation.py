@@ -8,7 +8,8 @@ from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.i18n import tr
-from app.keyboards import order_history_kb, categories_kb, main_menu_kb, wallet_home_kb
+from app.keyboards import order_history_kb, categories_kb, main_menu_kb, wallet_home_kb, product_kb
+from app.services.loot_paglu import live_stock
 
 router = Router()
 
@@ -69,11 +70,63 @@ async def _show_home(message: Message, state: FSMContext) -> None:
             parse_mode="HTML",
         )
 
-
 @router.message(CommandStart())
 async def start_command(message: Message, state: FSMContext) -> None:
-    await _show_home(message, state)
+    text = message.text or ""
+    payload = text.split(maxsplit=1)[1].strip().lower() if len(text.split(maxsplit=1)) > 1 else ""
 
+    if payload == "gemini18":
+        await state.clear()
+        await _register_user(message)
+
+        async with SessionLocal() as session:
+            products = await repo.search_products(session, "Gemini", limit=20)
+
+            product = next(
+                (
+                    p for p in products
+                    if "gemini" in p.name.lower()
+                    and ("18 month" in p.name.lower() or "18-month" in p.name.lower())
+                ),
+                None,
+            )
+
+            if product:
+                local_stock = await repo.available_stock_count(session, product.id)
+                available_stock = await live_stock(product.id, local_stock)
+
+        if product:
+            caption = (
+                f"🔥 <b>{product.name}</b>\n\n"
+                f"📂 Category: <b>{product.category}</b>\n"
+                f"⚡ Delivery: <b>Instant after confirmation</b>\n"
+                f"🛡️ Support: <b>Available</b>\n"
+                f"📦 Sold: <b>{product.sold_count or 0}</b>\n\n"
+                f"{product.description}\n\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"💵 Price: <b>${float(product.price):.2f}</b>\n"
+                f"📦 Available stock: <b>{available_stock}</b>"
+            )
+
+            if available_stock <= 0:
+                caption += "\n❌ <b>Currently out of stock — purchasing is disabled</b>"
+
+            if product.image_file_id:
+                await message.answer_photo(
+                    product.image_file_id,
+                    caption=caption,
+                    reply_markup=product_kb(product.id, available_stock),
+                    parse_mode="HTML",
+                )
+            else:
+                await message.answer(
+                    caption,
+                    reply_markup=product_kb(product.id, available_stock),
+                    parse_mode="HTML",
+                )
+            return
+
+    await _show_home(message, state)
 
 @router.message(Command("menu"))
 async def menu_command(message: Message, state: FSMContext) -> None:
