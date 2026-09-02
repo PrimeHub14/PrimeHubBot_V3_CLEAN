@@ -108,12 +108,24 @@ def quantity_kb(product_id: int, quantity: int) -> InlineKeyboardMarkup:
 def payment_methods_kb(product_id: int, quantity: int = 1) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Pay with Wallet", callback_data=f"walletpay:{product_id}:{quantity}")],
-        [InlineKeyboardButton(text="🟡 Pay with Binance", callback_data=f"manual:{product_id}:{quantity}:binance")],
+        [InlineKeyboardButton(text="🟡 Pay with Binance — Auto Verify", callback_data=f"directbinance:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="🟡 Pay with USDT (BEP20) — Auto Verify", callback_data=f"directbep:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="🟢 Pay with USDT (TRC20) — Auto Verify", callback_data=f"directtrc:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="🇮🇳 Pay with UPI", callback_data=f"manual:{product_id}:{quantity}:upi")],
         [InlineKeyboardButton(text="⬅️ Back", callback_data=f"quantity:{product_id}:{quantity}")],
     ])
+
+
+def binance_waiting_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Buttons shown under Binance Pay auto-verification card."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Check Payment Status", callback_data=f"binancecheck:{order_id}")],
+            [InlineKeyboardButton(text="✍️ Submit Binance Order ID / TxID", callback_data=f"binancetxid:{order_id}")],
+            [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"binancecancel:{order_id}")],
+            [InlineKeyboardButton(text="🛟 Payment Help", callback_data="help:home")],
+        ]
+    )
 
 
 def payment_info_kb(payment_url: str | None = None) -> InlineKeyboardMarkup:

@@ -10,7 +10,7 @@ from app.keyboards import order_again_kb
 
 def payment_window_minutes(order) -> int:
     """Return the user-facing payment window for the order."""
-    if order.payment_method in {"usdttrc20_direct", "usdtbep20_direct"}:
+    if order.payment_method in {"usdttrc20_direct", "usdtbep20_direct", "binance_auto"}:
         return 30
     return 10
 
@@ -20,7 +20,7 @@ def expiry_label(order) -> str:
         return "USDT TRC20"
     if order.payment_method == "usdtbep20_direct":
         return "USDT BEP20"
-    if order.payment_method == "binance":
+    if order.payment_method in {"binance", "binance_auto"}:
         return "Binance Pay"
     if order.payment_method == "upi":
         return "UPI"
