@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any
 
 import aiohttp
@@ -58,20 +59,26 @@ class LootPagluClient:
         return await self._request("GET", "/api/v1/me")
 
     async def products(self) -> list[dict[str, Any]]:
-        data = await self._request("GET", "/api/v1/products")
-        services = data.get("services") or []
-        return services if isinstance(services, list) else []
+        try:
+            data = await self._request("GET", "/api/v1/products")
+            if isinstance(data, list):
+                return [x for x in data if isinstance(x, dict)]
+            services = data.get("services") if isinstance(data, dict) else []
+            return [x for x in services if isinstance(x, dict)]
+        except Exception as exc:
+            logging.warning(f"LootPaglu products request failed: {exc}")
+            return []
 
     async def service(self, service_id: str | None = None) -> dict[str, Any] | None:
         wanted = (service_id or settings.LOOTPAGLU_SERVICE_ID).strip()
         for service in await self.products():
-            if str(service.get("service_id")) == wanted:
+            if isinstance(service, dict) and str(service.get("service_id")) == wanted:
                 return service
         return None
 
     async def stock(self, service_id: str | None = None) -> int:
         service = await self.service(service_id)
-        if not service:
+        if not service or not isinstance(service, dict):
             return 0
         try:
             return max(0, int(service.get("available_stock") or 0))
@@ -100,6 +107,7 @@ async def live_stock(product_id: int, local_stock: int | None = None) -> int:
         return max(0, int(local_stock or 0))
     try:
         return await LootPagluClient().stock()
-    except LootPagluError:
+    except Exception as exc:
+        logging.warning(f"Failed to fetch live stock for product {product_id}: {exc}")
         # Fail closed: never sell API stock when the supplier cannot be checked.
         return 0
