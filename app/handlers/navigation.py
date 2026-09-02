@@ -1,3 +1,4 @@
+import logging
 from html import escape
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
@@ -96,13 +97,16 @@ async def start_command(message: Message, state: FSMContext) -> None:
                 available_stock = await live_stock(product.id, local_stock)
 
         if product:
+            safe_name = escape(product.name or "")
+            safe_cat = escape(product.category or "")
+            safe_desc = escape(product.description or "")
             caption = (
-                f"🔥 <b>{product.name}</b>\n\n"
-                f"📂 Category: <b>{product.category}</b>\n"
+                f"🔥 <b>{safe_name}</b>\n\n"
+                f"📂 Category: <b>{safe_cat}</b>\n"
                 f"⚡ Delivery: <b>Instant after confirmation</b>\n"
                 f"🛡️ Support: <b>Available</b>\n"
                 f"📦 Sold: <b>{product.sold_count or 0}</b>\n\n"
-                f"{product.description}\n\n"
+                f"{safe_desc}\n\n"
                 f"━━━━━━━━━━━━━━\n"
                 f"💵 Price: <b>${float(product.price):.2f}</b>\n"
                 f"📦 Available stock: <b>{available_stock}</b>"
@@ -111,19 +115,49 @@ async def start_command(message: Message, state: FSMContext) -> None:
             if available_stock <= 0:
                 caption += "\n❌ <b>Currently out of stock — purchasing is disabled</b>"
 
+            kb = product_kb(product.id, available_stock)
+            sent = False
             if product.image_file_id:
-                await message.answer_photo(
-                    product.image_file_id,
-                    caption=caption,
-                    reply_markup=product_kb(product.id, available_stock),
-                    parse_mode="HTML",
-                )
-            else:
-                await message.answer(
-                    caption,
-                    reply_markup=product_kb(product.id, available_stock),
-                    parse_mode="HTML",
-                )
+                try:
+                    if len(caption) <= 1024:
+                        await message.answer_photo(
+                            product.image_file_id,
+                            caption=caption,
+                            reply_markup=kb,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await message.answer_photo(product.image_file_id)
+                        await message.answer(
+                            caption,
+                            reply_markup=kb,
+                            parse_mode="HTML",
+                        )
+                    sent = True
+                except Exception as exc:
+                    logging.warning(f"Failed to send navigation photo for #{product.id} ({exc}), falling back to text.")
+
+            if not sent:
+                try:
+                    await message.answer(
+                        caption,
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
+                except Exception as exc:
+                    logging.warning(f"Failed to send HTML navigation message for #{product.id} ({exc}), falling back to plain text.")
+                    plain_caption = (
+                        f"🔥 {product.name}\n\n"
+                        f"📂 Category: {product.category}\n"
+                        f"⚡ Delivery: Instant after confirmation\n"
+                        f"🛡️ Support: Available\n"
+                        f"📦 Sold: {product.sold_count or 0}\n\n"
+                        f"{product.description}\n\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"💵 Price: ${float(product.price):.2f}\n"
+                        f"📦 Available stock: {available_stock}"
+                    )
+                    await message.answer(plain_caption, reply_markup=kb)
             return
 
     await _show_home(message, state)

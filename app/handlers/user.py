@@ -1,3 +1,4 @@
+import logging
 from html import escape
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
@@ -86,13 +87,16 @@ def welcome_text(first_name: str | None = None) -> str:
 
 
 def product_caption(product) -> str:
+    safe_name = escape(product.name or "")
+    safe_category = escape(product.category or "")
+    safe_description = escape(product.description or "")
     return (
-        f"🔥 <b>{product.name}</b>\n\n"
-        f"📂 Category: <b>{product.category}</b>\n"
+        f"🔥 <b>{safe_name}</b>\n\n"
+        f"📂 Category: <b>{safe_category}</b>\n"
         f"⚡ Delivery: <b>Instant after confirmation</b>\n"
         f"🛡️ Support: <b>Available</b>\n"
         f"📦 Sold: <b>{product.sold_count or 0}</b>\n\n"
-        f"{product.description}\n\n"
+        f"{safe_description}\n\n"
         f"━━━━━━━━━━━━━━\n"
         f"💵 Price: <b>${float(product.price):.2f}</b>\n"
         f"👇 Choose a payment method to continue."
@@ -253,22 +257,61 @@ async def order_history_detail(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("product:"))
 async def show_product(call: CallbackQuery):
-    product_id = int(call.data.split(":")[1])
-    async with SessionLocal() as session:
-        product = await repo.get_product(session, product_id)
-        available_stock = await product_available_stock(session, product)
-    if not product or not product.active:
-        await call.answer("Product not found.", show_alert=True)
-        return
-    caption = product_caption(product)
-    caption += f"\n📦 Available stock: <b>{available_stock}</b>"
-    if available_stock <= 0:
-        caption += "\n❌ <b>Currently out of stock — purchasing is disabled</b>"
-    if product.image_file_id:
-        await call.message.answer_photo(product.image_file_id, caption=caption, reply_markup=product_kb(product.id, available_stock), parse_mode="HTML")
-    else:
-        await call.message.answer(caption, reply_markup=product_kb(product.id, available_stock), parse_mode="HTML")
     await call.answer()
+    try:
+        product_id = int(call.data.split(":")[1])
+        async with SessionLocal() as session:
+            product = await repo.get_product(session, product_id)
+            if not product or not product.active:
+                await call.message.answer("Product not found or is currently unavailable.")
+                return
+            available_stock = await product_available_stock(session, product)
+
+        caption = product_caption(product)
+        caption += f"\n📦 Available stock: <b>{available_stock}</b>"
+        if available_stock <= 0:
+            caption += "\n❌ <b>Currently out of stock — purchasing is disabled</b>"
+
+        kb = product_kb(product.id, available_stock)
+
+        sent = False
+        if product.image_file_id:
+            try:
+                if len(caption) <= 1024:
+                    await call.message.answer_photo(
+                        product.image_file_id,
+                        caption=caption,
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
+                else:
+                    await call.message.answer_photo(product.image_file_id)
+                    await call.message.answer(caption, reply_markup=kb, parse_mode="HTML")
+                sent = True
+            except Exception as exc:
+                logging.warning(f"Failed to send product photo for #{product.id} ({exc}), falling back to text.")
+
+        if not sent:
+            try:
+                await call.message.answer(caption, reply_markup=kb, parse_mode="HTML")
+            except Exception as exc:
+                logging.warning(f"Failed to send HTML product message for #{product.id} ({exc}), falling back to plain text.")
+                plain_caption = (
+                    f"🔥 {product.name}\n\n"
+                    f"📂 Category: {product.category}\n"
+                    f"⚡ Delivery: Instant after confirmation\n"
+                    f"🛡️ Support: Available\n"
+                    f"📦 Sold: {product.sold_count or 0}\n\n"
+                    f"{product.description}\n\n"
+                    f"━━━━━━━━━━━━━━\n"
+                    f"💵 Price: ${float(product.price):.2f}\n"
+                    f"📦 Available stock: {available_stock}\n"
+                    f"👇 Choose a payment method to continue."
+                )
+                await call.message.answer(plain_caption, reply_markup=kb)
+    except Exception as exc:
+        logging.exception(f"Unhandled error in show_product: {exc}")
+        await call.message.answer("⚠️ Could not load product details. Please try again.")
 
 
 @router.callback_query(F.data == "outofstock")
@@ -326,66 +369,76 @@ async def remember_checkout_menu(state: FSMContext, message: Message) -> None:
 
 @router.callback_query(F.data.startswith("quantity:"))
 async def choose_quantity(call: CallbackQuery, state: FSMContext):
-    _, product_id_raw, quantity_raw = call.data.split(":")
-    product_id = int(product_id_raw)
-    quantity = max(1, int(quantity_raw))
-    async with SessionLocal() as session:
-        product = await repo.get_product(session, product_id)
-        available_stock = await product_available_stock(session, product)
-    if not product or not product.active:
-        await call.answer("Product not found.", show_alert=True)
-        return
-    if available_stock <= 0:
-        await call.answer("This product is out of stock.", show_alert=True)
-        return
-    if quantity > available_stock:
-        await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
-        return
-
-    await cleanup_previous_checkout_ui(call, state)
-
-    total = float(product.price) * quantity
-    text = (
-        f"🛒 <b>Select Quantity</b>\n\n"
-        f"📦 {product.name}\n"
-        f"Price each: <b>${float(product.price):.2f}</b>\n"
-        f"Quantity: <b>{quantity}</b>\n"
-        f"Total: <b>${total:.2f}</b>\n\n"
-        f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
-    )
-    await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
     await call.answer()
+    try:
+        _, product_id_raw, quantity_raw = call.data.split(":")
+        product_id = int(product_id_raw)
+        quantity = max(1, int(quantity_raw))
+        async with SessionLocal() as session:
+            product = await repo.get_product(session, product_id)
+            if not product or not product.active:
+                await call.message.answer("Product not found or is currently unavailable.")
+                return
+            available_stock = await product_available_stock(session, product)
+        if available_stock <= 0:
+            await call.message.answer("This product is out of stock.")
+            return
+        if quantity > available_stock:
+            await call.message.answer(f"Only {available_stock} item(s) are available.")
+            return
+
+        await cleanup_previous_checkout_ui(call, state)
+
+        total = float(product.price) * quantity
+        safe_name = escape(product.name or "")
+        text = (
+            f"🛒 <b>Select Quantity</b>\n\n"
+            f"📦 {safe_name}\n"
+            f"Price each: <b>${float(product.price):.2f}</b>\n"
+            f"Quantity: <b>{quantity}</b>\n"
+            f"Total: <b>${total:.2f}</b>\n\n"
+            f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
+        )
+        await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+    except Exception as exc:
+        logging.exception(f"Unhandled error in choose_quantity: {exc}")
+        await call.message.answer("⚠️ Could not process quantity selection.")
 
 
 @router.callback_query(F.data.startswith("typeqty:"))
 async def ask_typed_quantity(call: CallbackQuery, state: FSMContext):
-    product_id = int(call.data.split(":", 1)[1])
-
-    async with SessionLocal() as session:
-        product = await repo.get_product(session, product_id)
-        available_stock = await product_available_stock(session, product)
-
-    if not product or not product.active:
-        await call.answer("Product not found.", show_alert=True)
-        return
-    if available_stock <= 0:
-        await call.answer("This product is out of stock.", show_alert=True)
-        return
-
-    await cleanup_previous_checkout_ui(call, state)
-    await state.clear()
-    await state.update_data(quantity_product_id=product_id)
-    await state.set_state(QuantityInputState.waiting_quantity)
-
-    await call.message.answer(
-        f"⌨️ <b>Type Quantity</b>\n\n"
-        f"📦 {product.name}\n"
-        f"Available stock: <b>{available_stock}</b>\n\n"
-        f"Send the quantity you want as a number.\n"
-        f"Example: <code>25</code>",
-        parse_mode="HTML",
-    )
     await call.answer()
+    try:
+        product_id = int(call.data.split(":", 1)[1])
+
+        async with SessionLocal() as session:
+            product = await repo.get_product(session, product_id)
+            if not product or not product.active:
+                await call.message.answer("Product not found or is currently unavailable.")
+                return
+            available_stock = await product_available_stock(session, product)
+
+        if available_stock <= 0:
+            await call.message.answer("This product is out of stock.")
+            return
+
+        await cleanup_previous_checkout_ui(call, state)
+        await state.clear()
+        await state.update_data(quantity_product_id=product_id)
+        await state.set_state(QuantityInputState.waiting_quantity)
+
+        safe_name = escape(product.name or "")
+        await call.message.answer(
+            f"⌨️ <b>Type Quantity</b>\n\n"
+            f"📦 {safe_name}\n"
+            f"Available stock: <b>{available_stock}</b>\n\n"
+            f"Send the quantity you want as a number.\n"
+            f"Example: <code>25</code>",
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        logging.exception(f"Unhandled error in ask_typed_quantity: {exc}")
+        await call.message.answer("⚠️ Could not initiate quantity input.")
 
 
 @router.message(QuantityInputState.waiting_quantity)
@@ -452,86 +505,95 @@ async def quantity_noop(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("qty:"))
 async def change_quantity(call: CallbackQuery):
-    _, product_id_raw, quantity_raw, delta_raw = call.data.split(":")
-    product_id = int(product_id_raw)
-    quantity = max(1, int(quantity_raw) + int(delta_raw))
-    async with SessionLocal() as session:
-        product = await repo.get_product(session, product_id)
-        available_stock = await product_available_stock(session, product)
-    if not product or not product.active:
-        await call.answer("Product not found.", show_alert=True)
-        return
-    if available_stock <= 0:
-        await call.answer("This product is out of stock.", show_alert=True)
-        return
-    if quantity > available_stock:
-        await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
-        return
-    total = float(product.price) * quantity
-    text = (
-        f"🛒 <b>Select Quantity</b>\n\n"
-        f"📦 {product.name}\n"
-        f"Price each: <b>${float(product.price):.2f}</b>\n"
-        f"Quantity: <b>{quantity}</b>\n"
-        f"Total: <b>${total:.2f}</b>\n\n"
-        f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
-    )
-    try:
-        await call.message.edit_text(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
-    except Exception:
-        await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
     await call.answer()
+    try:
+        _, product_id_raw, quantity_raw, delta_raw = call.data.split(":")
+        product_id = int(product_id_raw)
+        quantity = max(1, int(quantity_raw) + int(delta_raw))
+        async with SessionLocal() as session:
+            product = await repo.get_product(session, product_id)
+            if not product or not product.active:
+                await call.message.answer("Product not found or is currently unavailable.")
+                return
+            available_stock = await product_available_stock(session, product)
+        if available_stock <= 0:
+            await call.message.answer("This product is out of stock.")
+            return
+        if quantity > available_stock:
+            await call.message.answer(f"Only {available_stock} item(s) are available.")
+            return
+        total = float(product.price) * quantity
+        safe_name = escape(product.name or "")
+        text = (
+            f"🛒 <b>Select Quantity</b>\n\n"
+            f"📦 {safe_name}\n"
+            f"Price each: <b>${float(product.price):.2f}</b>\n"
+            f"Quantity: <b>{quantity}</b>\n"
+            f"Total: <b>${total:.2f}</b>\n\n"
+            f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
+        )
+        try:
+            await call.message.edit_text(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+        except Exception:
+            await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+    except Exception as exc:
+        logging.exception(f"Unhandled error in change_quantity: {exc}")
 
 
 @router.callback_query(F.data.startswith("paymenu:"))
 async def payment_menu(call: CallbackQuery, state: FSMContext):
-    parts = call.data.split(":")
-    product_id = int(parts[1])
-    quantity = max(1, int(parts[2]) if len(parts) > 2 else 1)
-    async with SessionLocal() as session:
-        product = await repo.get_product(session, product_id)
-        available_stock = await product_available_stock(session, product)
-    if not product or not product.active:
-        await call.answer("Product not found.", show_alert=True)
-        return
-    if available_stock <= 0:
-        await call.answer("This product is out of stock.", show_alert=True)
-        return
-    if quantity > available_stock:
-        await call.answer(f"Only {available_stock} item(s) are available.", show_alert=True)
-        return
-    total = float(product.price) * quantity
-    text = (
-        f"💳 <b>Choose Payment Method</b>\n\n"
-        f"📦 Product: <b>{product.name}</b>\n"
-        f"🔢 Quantity: <b>{quantity}</b>\n"
-        f"💵 Total: <b>${total:.2f}</b>\n\n"
-        f"Select the method you prefer 👇"
-    )
-    try:
-        await call.message.edit_text(
-            text,
-            reply_markup=payment_methods_kb(product.id, quantity),
-            parse_mode="HTML",
-        )
-        sent = call.message
-    except Exception:
-        data = await state.get_data()
-        old_chat = data.get("checkout_menu_chat_id")
-        old_message = data.get("checkout_menu_message_id")
-        if old_chat and old_message:
-            try:
-                await call.bot.delete_message(chat_id=int(old_chat), message_id=int(old_message))
-            except Exception:
-                pass
-        sent = await call.message.answer(
-            text,
-            reply_markup=payment_methods_kb(product.id, quantity),
-            parse_mode="HTML",
-        )
-
-    await remember_checkout_menu(state, sent)
     await call.answer()
+    try:
+        parts = call.data.split(":")
+        product_id = int(parts[1])
+        quantity = max(1, int(parts[2]) if len(parts) > 2 else 1)
+        async with SessionLocal() as session:
+            product = await repo.get_product(session, product_id)
+            if not product or not product.active:
+                await call.message.answer("Product not found or is currently unavailable.")
+                return
+            available_stock = await product_available_stock(session, product)
+        if available_stock <= 0:
+            await call.message.answer("This product is out of stock.")
+            return
+        if quantity > available_stock:
+            await call.message.answer(f"Only {available_stock} item(s) are available.")
+            return
+        total = float(product.price) * quantity
+        safe_name = escape(product.name or "")
+        text = (
+            f"💳 <b>Choose Payment Method</b>\n\n"
+            f"📦 Product: <b>{safe_name}</b>\n"
+            f"🔢 Quantity: <b>{quantity}</b>\n"
+            f"💵 Total: <b>${total:.2f}</b>\n\n"
+            f"Select the method you prefer 👇"
+        )
+        try:
+            await call.message.edit_text(
+                text,
+                reply_markup=payment_methods_kb(product.id, quantity),
+                parse_mode="HTML",
+            )
+            sent = call.message
+        except Exception:
+            data = await state.get_data()
+            old_chat = data.get("checkout_menu_chat_id")
+            old_message = data.get("checkout_menu_message_id")
+            if old_chat and old_message:
+                try:
+                    await call.bot.delete_message(chat_id=int(old_chat), message_id=int(old_message))
+                except Exception:
+                    pass
+            sent = await call.message.answer(
+                text,
+                reply_markup=payment_methods_kb(product.id, quantity),
+                parse_mode="HTML",
+            )
+
+        await remember_checkout_menu(state, sent)
+    except Exception as exc:
+        logging.exception(f"Unhandled error in payment_menu: {exc}")
+        await call.message.answer("⚠️ Could not load payment options.")
 
 
 @router.callback_query(F.data.startswith("manual:"))
