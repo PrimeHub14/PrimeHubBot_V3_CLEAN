@@ -55,43 +55,62 @@ def create_app(bot: Bot) -> web.Application:
 
     async def phonepe_webhook(request: web.Request) -> web.Response:
         """Receive PhonePe Business notifications forwarded from mobile app."""
+        raw_str = ""
+        data = {}
         try:
-            data = {}
-            if request.can_read_body:
+            raw_bytes = await request.read()
+            raw_str = raw_bytes.decode("utf-8", errors="replace").strip()
+            if raw_str.startswith("{") and raw_str.endswith("}"):
                 try:
-                    data = await request.json()
+                    import json
+                    data = json.loads(raw_str)
                 except Exception:
-                    post_data = await request.post()
-                    data = dict(post_data)
+                    pass
         except Exception:
-            data = {}
+            pass
 
+        # Also check query parameters in case GET was used
+        query_text = " ".join(request.query.values()).strip()
         combined_text = " ".join([
-            str(data.get("title") or ""),
-            str(data.get("text") or ""),
-            str(data.get("message") or ""),
-            str(data.get("body") or ""),
-            str(data.get("notification") or ""),
-            str(data.get("content") or ""),
+            raw_str,
+            query_text,
+            str(data.get("title") or "") if isinstance(data, dict) else "",
+            str(data.get("text") or "") if isinstance(data, dict) else "",
+            str(data.get("message") or "") if isinstance(data, dict) else "",
+            str(data.get("body") or "") if isinstance(data, dict) else "",
+            str(data.get("notification") or "") if isinstance(data, dict) else "",
+            str(data.get("content") or "") if isinstance(data, dict) else "",
         ]).strip()
 
-        raw_utr = str(data.get("utr") or data.get("ref") or data.get("txnId") or "").strip()
-        raw_amount = str(data.get("amount") or data.get("amt") or "").strip()
+        raw_utr = (
+            str(data.get("utr") or data.get("ref") or data.get("txnId") or "").strip() if isinstance(data, dict) else ""
+        ) or str(request.query.get("utr") or request.query.get("ref") or "").strip()
+        raw_amount = (
+            str(data.get("amount") or data.get("amt") or "").strip() if isinstance(data, dict) else ""
+        ) or str(request.query.get("amount") or request.query.get("amt") or "").strip()
 
-        # Regex extract 12-digit UTR if not provided directly
+        # Regex extract 12-digit UTR anywhere in payload
         if not raw_utr and combined_text:
             utr_match = re.search(r'\b(\d{12})\b', combined_text)
             if utr_match:
                 raw_utr = utr_match.group(1)
 
-        # Regex extract INR amount
+        # Regex extract INR amount anywhere in payload
         if not raw_amount and combined_text:
             amt_match = re.search(r'(?:₹|Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)', combined_text, re.IGNORECASE)
             if amt_match:
                 raw_amount = amt_match.group(1).replace(",", "")
+            else:
+                amt_match2 = re.search(r'([\d,]+(?:\.\d{1,2})?)\s*(?:₹|Rs\.?|INR)', combined_text, re.IGNORECASE)
+                if amt_match2:
+                    raw_amount = amt_match2.group(1).replace(",", "")
 
         if not raw_utr:
-            return web.json_response({"status": "ignored", "reason": "No 12-digit UTR found in notification"}, status=200)
+            return web.json_response({
+                "status": "online",
+                "message": "PhonePe webhook is running. Send POST with notification body to record transactions.",
+                "received_snippet": (combined_text or raw_str)[:100]
+            }, status=200)
 
         try:
             amount_val = float(raw_amount) if raw_amount else 0.0
@@ -147,7 +166,9 @@ def create_app(bot: Bot) -> web.Application:
         })
 
     app.router.add_post("/nowpayments-webhook", nowpayments_webhook)
-    app.router.add_post("/webhook/phonepe", phonepe_webhook)
-    app.router.add_post("/webhook/upi", phonepe_webhook)
+    # Register all methods and path aliases
+    for path in ("/webhook/phonepe", "/webhook/upi", "/phonepe", "/phonepe-webhook"):
+        app.router.add_get(path, phonepe_webhook)
+        app.router.add_post(path, phonepe_webhook)
     app.router.add_get("/", lambda request: web.Response(text="PrimeHub Premium Store is running."))
     return app

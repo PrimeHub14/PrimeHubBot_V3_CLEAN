@@ -5,6 +5,7 @@ from html import escape
 from urllib.parse import quote_plus
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
@@ -13,6 +14,7 @@ from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.keyboards import upi_waiting_kb, main_menu_kb
+from app.utils.security import is_admin
 from app.services.delivery import deliver_order
 from app.services.loot_paglu import live_stock
 from app.services.payment_messages import remove_previous_payment_message
@@ -295,3 +297,62 @@ async def upi_cancel(call: CallbackQuery, state: FSMContext):
         await call.message.answer(f"Order #{order_id} cancelled. No inventory was deducted.", reply_markup=main_menu_kb())
     else:
         await call.message.answer("Order could not be cancelled or has already been finalized.", reply_markup=main_menu_kb())
+
+
+@router.message(Command("upistatus"))
+async def upi_status_command(message: Message):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    async with SessionLocal() as session:
+        records = await repo.list_recent_upi_payments(session, limit=10)
+
+    if not records:
+        await message.answer(
+            "📊 <b>UPI Status:</b> No PhonePe notifications have been recorded yet in the database.\n\n"
+            "<b>Troubleshooting Checklist:</b>\n"
+            "1. Did you receive the PhonePe notification on your phone?\n"
+            "2. In MacroDroid, tap <b>System Log</b> to see if the HTTP Request succeeded or failed.\n"
+            "3. Verify the URL in MacroDroid ends with <code>/webhook/phonepe</code>.",
+            parse_mode="HTML",
+        )
+        return
+
+    lines = [f"📊 <b>Recent PhonePe Recorded Payments ({len(records)}):</b>\n"]
+    for r in records:
+        status_text = f"Claimed by Order #{r.order_id}" if r.order_id else "Unclaimed"
+        lines.append(
+            f"• UTR: <code>{r.utr}</code> | <b>₹{float(r.amount):.2f}</b> | {status_text}"
+        )
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("upiapprove"))
+async def upi_approve_command(message: Message):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").strip().split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/upiapprove &lt;order_id&gt;</code>", parse_mode="HTML")
+        return
+
+    order_id = int(parts[1])
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await message.answer(f"Order #{order_id} not found.")
+            return
+        if order.delivered or order.status in {"delivered", "finished", "paid"}:
+            await message.answer(f"Order #{order_id} is already delivered.")
+            return
+
+        order.status = "paid"
+        order.provider_payment_id = f"admin_approved:{order.payment_proof_value or 'manual'}"
+        order.expires_at = None
+        await session.commit()
+        await deliver_order(message.bot, session, order)
+
+    await message.answer(f"✅ Order #{order_id} approved and delivered to the customer.")
+

@@ -1013,7 +1013,7 @@ async def find_matching_upi_payment(
     session: AsyncSession,
     utr: str,
     expected_inr: float,
-    tolerance: float = 1.0,
+    tolerance: float = 5.0,
 ) -> IncomingUpiPayment | None:
     clean_utr = utr.strip()
     stmt = select(IncomingUpiPayment).where(IncomingUpiPayment.utr == clean_utr)
@@ -1025,11 +1025,19 @@ async def find_matching_upi_payment(
     if record.order_id is not None:
         return None
 
-    # Check amount matching (allowing 1 INR tolerance)
-    if abs(float(record.amount) - float(expected_inr)) > tolerance:
-        return None
+    # If amount was parsed from notification, verify tolerance
+    amt = float(record.amount)
+    if amt > 0:
+        max_diff = max(5.0, expected_inr * 0.15)
+        if abs(amt - float(expected_inr)) > max_diff:
+            return None
 
     return record
+
+
+async def list_recent_upi_payments(session: AsyncSession, limit: int = 10) -> list[IncomingUpiPayment]:
+    stmt = select(IncomingUpiPayment).order_by(IncomingUpiPayment.id.desc()).limit(limit)
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def claim_upi_payment(
