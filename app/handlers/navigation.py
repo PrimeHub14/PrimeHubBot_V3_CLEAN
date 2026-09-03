@@ -21,10 +21,9 @@ def _welcome_text(first_name: str | None = None) -> str:
         f"👋 Welcome, <b>{name}</b>!\n\n"
         f"🛍️ <b>{settings.STORE_NAME.replace('PrimeHub', 'Prime Hub')}</b>\n"
         "Premium digital products with fast delivery.\n\n"
-        "✅ Automatic crypto confirmation\n"
-        "✅ Manual Binance & UPI approval\n"
-        "✅ Instant wallet purchases\n"
-        "✅ Order history and support\n\n"
+        "⚡ <b>Instant Auto Verification</b> for Crypto, Binance Pay & UPI\n"
+        "📦 <b>24/7 Instant Delivery</b> immediately after payment\n"
+        "🛡️ Dedicated order history and customer support\n\n"
         "Choose an option below 👇"
     )
 
@@ -50,10 +49,9 @@ async def _show_home(message: Message, state: FSMContext) -> None:
         f"👋 Welcome, <b>{escape(name)}</b>!\n\n"
         "🛍 <b>Prime Hub Store</b>\n"
         "Premium digital products with fast delivery.\n\n"
-        "✅ Automatic crypto confirmation\n"
-        "✅ Manual Wallet, Binance & UPI approval\n"
-        "✅ Instant delivery after approval\n"
-        "✅ Order history and support\n\n"
+        "⚡ <b>Instant Auto Verification</b> for Crypto, Binance Pay & UPI\n"
+        "📦 <b>24/7 Instant Delivery</b> immediately after payment\n"
+        "🛡️ Dedicated order history and customer support\n\n"
         "Choose an option below 👇"
     )
 

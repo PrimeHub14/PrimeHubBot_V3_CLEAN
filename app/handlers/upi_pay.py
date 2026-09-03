@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 
 from app.config import settings
 from app.db import repo
@@ -29,6 +30,14 @@ class UPIPayState(StatesGroup):
     waiting_utr = State()
 
 
+def compute_upi_inr(amount_usd: float, order_id: int) -> float:
+    """Add deterministic unique paise (0.01 to 0.89) based on order_id to prevent collision."""
+    inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+    base_inr = float(amount_usd) * inr_rate
+    unique_paise = ((int(order_id) * 7 + 11) % 89) / 100.0
+    return round(float(int(base_inr)) + unique_paise, 2)
+
+
 @router.callback_query(F.data.startswith("directupi:"))
 async def direct_upi(call: CallbackQuery):
     await call.answer()
@@ -45,6 +54,8 @@ async def direct_upi(call: CallbackQuery):
         product = await repo.get_product(session, product_id)
         local_stock = await repo.available_stock_count(session, product_id) if product else 0
         available_stock = await live_stock(product_id, local_stock) if product else 0
+        if product and (not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual"):
+            available_stock = 999
 
         if not product or not product.active:
             await call.message.answer("Product not found or is currently unavailable.")
@@ -60,7 +71,8 @@ async def direct_upi(call: CallbackQuery):
             order = await repo.create_order(
                 session,
                 call.from_user.id,
-                product,
+                product.id,
+                product.price * quantity,
                 "INR",
                 "upi_auto",
                 quantity,
@@ -74,7 +86,7 @@ async def direct_upi(call: CallbackQuery):
         await session.commit()
 
     inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
-    inr_amount = round(float(order.amount) * inr_rate, 2)
+    inr_amount = compute_upi_inr(float(order.amount), order.id)
     safe_name = escape(product.name or "")
 
     upi_deep_link = (
@@ -97,12 +109,18 @@ async def direct_upi(call: CallbackQuery):
         "⏳ Payment window: <b>15 minutes</b>\n\n"
         "🔍 <b>How to Pay & Receive Instantly:</b>\n"
         "1. Scan the QR code above with <b>PhonePe, GPay, or Paytm</b>.\n"
-        f"2. Pay exactly <b>₹{inr_amount:.2f}</b>.\n"
+        f"2. Pay exactly <b>₹{inr_amount:.2f}</b> (paise included for instant match).\n"
         "3. Tap <b>'✍️ Submit 12-Digit UTR'</b> below and enter your 12-digit UPI reference number.\n\n"
         "⚡ <i>Your payment is verified against PhonePe and your product is delivered in seconds!</i>"
     )
 
     await remove_previous_payment_message(call.bot, order)
+
+    # Clean up previous payment method menu so only the QR card is shown
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
 
     kb = upi_waiting_kb(order.id)
     sent = None
@@ -182,8 +200,20 @@ async def upi_receive_utr(message: Message, state: FSMContext):
             await message.answer("✅ This order has already been verified and delivered!", reply_markup=main_menu_kb())
             return
 
-        expected_inr = round(float(order.amount) * inr_rate, 2)
+        expected_inr = compute_upi_inr(float(order.amount), order.id)
         match = await repo.find_matching_upi_payment(session, utr, expected_inr)
+
+        # Fallback: Check if there is an unclaimed PhonePe payment matching this amount
+        if not match:
+            stmt = select(repo.IncomingUpiPayment).where(
+                repo.IncomingUpiPayment.order_id.is_(None),
+            ).order_by(repo.IncomingUpiPayment.id.desc()).limit(10)
+            unclaimed = list((await session.execute(stmt)).scalars().all())
+            for c in unclaimed:
+                if abs(float(c.amount) - expected_inr) <= 2.0:
+                    c.utr = utr
+                    match = c
+                    break
 
         if match:
             await repo.claim_upi_payment(session, match, order)
@@ -239,8 +269,7 @@ async def upi_check(call: CallbackQuery):
             await call.answer("✅ This order has already been verified and delivered!", show_alert=True)
             return
 
-        inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
-        expected_inr = round(float(order.amount) * inr_rate, 2)
+        expected_inr = compute_upi_inr(float(order.amount), order.id)
 
         # If user previously typed a UTR, re-check it
         if order.payment_proof_value:
@@ -355,4 +384,22 @@ async def upi_approve_command(message: Message):
         await deliver_order(message.bot, session, order)
 
     await message.answer(f"✅ Order #{order_id} approved and delivered to the customer.")
+
+
+@router.message(Command("upidebug"))
+async def upi_debug_command(message: Message):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    from app.webhook import RECENT_WEBHOOK_LOGS
+    if not RECENT_WEBHOOK_LOGS:
+        await message.answer("No webhook requests have reached the server yet.")
+        return
+
+    lines = ["🔍 <b>Recent Webhook Hits Received from Phone:</b>\n"]
+    for entry in RECENT_WEBHOOK_LOGS[-5:]:
+        lines.append(f"⏰ {entry['time']}\n<code>{escape(entry['raw'])}</code>\n")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
 

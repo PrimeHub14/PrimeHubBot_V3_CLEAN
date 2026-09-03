@@ -46,6 +46,8 @@ PAYMENT_LABELS = {
 async def product_available_stock(session, product) -> int:
     if not product:
         return 0
+    if not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
+        return 999
     local = await repo.available_stock_count(session, product.id)
     return await live_stock(product.id, local)
 
@@ -78,10 +80,9 @@ def welcome_text(first_name: str | None = None) -> str:
         f"👋 Welcome, <b>{name}</b>!\n\n"
         "🛍 <b>Prime Hub Store</b>\n"
         "Premium digital products with fast delivery.\n\n"
-        "✅ Automatic crypto confirmation\n"
-        "✅ Manual Wallet, Binance & UPI approval\n"
-        "✅ Instant delivery after approval\n"
-        "✅ Order history and support\n\n"
+        "⚡ <b>Instant Auto Verification</b> for Crypto, Binance Pay & UPI\n"
+        "📦 <b>24/7 Instant Delivery</b> immediately after payment\n"
+        "🛡️ Dedicated order history and customer support\n\n"
         "Choose an option below 👇"
     )
 
@@ -274,6 +275,12 @@ async def show_product(call: CallbackQuery):
 
         kb = product_kb(product.id, available_stock)
 
+        # Delete previous menu to keep the chat clean and compact
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+
         sent = False
         if product.image_file_id:
             try:
@@ -388,6 +395,10 @@ async def choose_quantity(call: CallbackQuery, state: FSMContext):
             return
 
         await cleanup_previous_checkout_ui(call, state)
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
 
         total = float(product.price) * quantity
         safe_name = escape(product.name or "")
@@ -399,7 +410,8 @@ async def choose_quantity(call: CallbackQuery, state: FSMContext):
             f"Total: <b>${total:.2f}</b>\n\n"
             f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
         )
-        await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+        sent = await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+        await remember_checkout_menu(state, sent)
     except Exception as exc:
         logging.exception(f"Unhandled error in choose_quantity: {exc}")
         await call.message.answer("⚠️ Could not process quantity selection.")
@@ -423,6 +435,10 @@ async def ask_typed_quantity(call: CallbackQuery, state: FSMContext):
             return
 
         await cleanup_previous_checkout_ui(call, state)
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
         await state.clear()
         await state.update_data(quantity_product_id=product_id)
         await state.set_state(QuantityInputState.waiting_quantity)

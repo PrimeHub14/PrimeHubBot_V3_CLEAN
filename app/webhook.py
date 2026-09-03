@@ -14,6 +14,9 @@ PAID_STATUSES = {"finished", "confirmed", "sending"}
 FAILED_STATUSES = {"failed", "expired", "refunded"}
 
 
+RECENT_WEBHOOK_LOGS = []
+
+
 def create_app(bot: Bot) -> web.Application:
     app = web.Application()
 
@@ -69,6 +72,15 @@ def create_app(bot: Bot) -> web.Application:
         except Exception:
             pass
 
+        # Record into recent debug logs
+        import time
+        RECENT_WEBHOOK_LOGS.append({
+            "time": time.strftime("%H:%M:%S"),
+            "raw": (raw_str or str(dict(request.query)))[:250],
+        })
+        if len(RECENT_WEBHOOK_LOGS) > 20:
+            RECENT_WEBHOOK_LOGS.pop(0)
+
         # Also check query parameters in case GET was used
         query_text = " ".join(request.query.values()).strip()
         combined_text = " ".join([
@@ -105,17 +117,21 @@ def create_app(bot: Bot) -> web.Application:
                 if amt_match2:
                     raw_amount = amt_match2.group(1).replace(",", "")
 
-        if not raw_utr:
-            return web.json_response({
-                "status": "online",
-                "message": "PhonePe webhook is running. Send POST with notification body to record transactions.",
-                "received_snippet": (combined_text or raw_str)[:100]
-            }, status=200)
-
         try:
             amount_val = float(raw_amount) if raw_amount else 0.0
         except ValueError:
             amount_val = 0.0
+
+        if not raw_utr and amount_val <= 0:
+            return web.json_response({
+                "status": "online",
+                "message": "PhonePe webhook received. No UTR or amount detected.",
+                "snippet": (combined_text or raw_str)[:100]
+            }, status=200)
+
+        # If UTR was not in push notification, create a fallback reference
+        if not raw_utr:
+            raw_utr = f"PHONEPE_{int(time.time())}"
 
         sender = str(data.get("sender") or data.get("payer") or "").strip() or None
 
@@ -128,26 +144,46 @@ def create_app(bot: Bot) -> web.Application:
                 raw_text=combined_text or str(data),
             )
 
-            # Auto-deliver if an open waiting order already submitted this UTR
-            stmt = select(Order).options(selectinload(Order.product)).where(
-                Order.status == "waiting_upi",
-                Order.payment_proof_value == raw_utr,
-                Order.delivered.is_(False),
-            )
-            order = (await session.execute(stmt)).scalar_one_or_none()
+            # Check if any open order with waiting_upi matches:
+            # 1. By UTR
+            # 2. Or by Amount!
+            matched_order = None
+            if raw_utr and not raw_utr.startswith("PHONEPE_"):
+                stmt = select(Order).options(selectinload(Order.product)).where(
+                    Order.status == "waiting_upi",
+                    Order.payment_proof_value == raw_utr,
+                    Order.delivered.is_(False),
+                )
+                matched_order = (await session.execute(stmt)).scalar_one_or_none()
 
-            if order:
-                await repo.claim_upi_payment(session, record, order)
+            if not matched_order and amount_val > 0:
+                from app.handlers.upi_pay import compute_upi_inr
+                inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+                # Check recent open waiting_upi orders
+                stmt = select(Order).options(selectinload(Order.product)).where(
+                    Order.status == "waiting_upi",
+                    Order.delivered.is_(False),
+                ).order_by(Order.id.desc())
+                pending_orders = list((await session.execute(stmt)).scalars().all())
+
+                for p_order in pending_orders:
+                    expected = compute_upi_inr(float(p_order.amount), p_order.id)
+                    if abs(expected - amount_val) <= 0.05 or abs(round(float(p_order.amount) * inr_rate, 2) - amount_val) <= 0.5:
+                        matched_order = p_order
+                        break
+
+            if matched_order:
+                await repo.claim_upi_payment(session, record, matched_order)
                 try:
-                    if order.payment_message_chat_id and order.payment_message_id:
+                    if matched_order.payment_message_chat_id and matched_order.payment_message_id:
                         try:
                             await bot.edit_message_caption(
-                                chat_id=order.payment_message_chat_id,
-                                message_id=order.payment_message_id,
+                                chat_id=matched_order.payment_message_chat_id,
+                                message_id=matched_order.payment_message_id,
                                 caption=(
                                     f"✅ <b>UPI Payment Confirmed!</b>\n\n"
-                                    f"🧾 Order ID: <code>#{order.id}</code>\n"
-                                    f"UTR: <code>{raw_utr}</code>\n"
+                                    f"🧾 Order ID: <code>#{matched_order.id}</code>\n"
+                                    f"UTR / Ref: <code>{raw_utr}</code>\n"
                                     f"💵 Amount: <b>₹{amount_val:,.2f}</b>\n\n"
                                     f"⚡ <i>Delivering your purchase below...</i>"
                                 ),
@@ -155,7 +191,7 @@ def create_app(bot: Bot) -> web.Application:
                             )
                         except Exception:
                             pass
-                    await deliver_order(bot, session, order)
+                    await deliver_order(bot, session, matched_order)
                 except Exception as exc:
                     pass
 
@@ -165,10 +201,25 @@ def create_app(bot: Bot) -> web.Application:
             "amount": amount_val,
         })
 
+    async def root_handler(request: web.Request) -> web.Response:
+        if request.method == "POST":
+            return await phonepe_webhook(request)
+        return web.Response(text="PrimeHub Premium Store is running.")
+
     app.router.add_post("/nowpayments-webhook", nowpayments_webhook)
-    # Register all methods and path aliases
-    for path in ("/webhook/phonepe", "/webhook/upi", "/phonepe", "/phonepe-webhook"):
+    app.router.add_get("/", root_handler)
+    app.router.add_post("/", root_handler)
+
+    # Register all path aliases so any URL works
+    for path in (
+        "/webhook/phonepe",
+        "/webhook/upi",
+        "/phonepe",
+        "/phonepe-webhook",
+        "/webhook",
+        "/upi",
+    ):
         app.router.add_get(path, phonepe_webhook)
         app.router.add_post(path, phonepe_webhook)
-    app.router.add_get("/", lambda request: web.Response(text="PrimeHub Premium Store is running."))
+
     return app

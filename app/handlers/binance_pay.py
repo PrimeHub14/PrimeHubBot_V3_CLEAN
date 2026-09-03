@@ -93,6 +93,11 @@ async def direct_binance(call: CallbackQuery):
 
     await remove_previous_payment_message(call.bot, order)
 
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+
     kb = binance_waiting_kb(order.id)
     sent = None
     try:
