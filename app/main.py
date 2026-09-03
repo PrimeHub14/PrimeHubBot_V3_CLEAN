@@ -23,6 +23,7 @@ from app.handlers import (
     bep20,
     binance_test,
     binance_pay,
+    upi_pay,
     enterprise,
 )
 from app.webhook import create_app
@@ -54,10 +55,11 @@ async def start_bot() -> None:
     dp.include_router(binance_test.router)
     dp.include_router(wallet.router)
 
-    # Direct blockchain and exchange payment callbacks must be registered before the general user router.
+    # Direct blockchain, exchange, and UPI payment callbacks must be registered before the general user router.
     dp.include_router(trc20.router)
     dp.include_router(bep20.router)
     dp.include_router(binance_pay.router)
+    dp.include_router(upi_pay.router)
     dp.include_router(user.router)
 
     app = create_app(bot)

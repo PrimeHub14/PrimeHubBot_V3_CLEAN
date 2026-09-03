@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 import uuid
 
 from app.config import settings
-from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription, Coupon, CouponRedemption, ReferralReward, LoyaltyTransaction, FlashSale, WishlistItem, ProductReview, ProductView, ScheduledBroadcast, AdminAuditLog
+from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription, Coupon, CouponRedemption, ReferralReward, LoyaltyTransaction, FlashSale, WishlistItem, ProductReview, ProductView, ScheduledBroadcast, AdminAuditLog, IncomingUpiPayment
 
 MANUAL_METHODS = {"wallet", "binance", "upi"}
 
@@ -218,7 +218,7 @@ async def cancel_open_orders_for_user(session: AsyncSession, user_id: int) -> li
         .where(
             Order.user_id == user_id,
             Order.delivered.is_(False),
-            Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance"]),
+            Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance", "waiting_upi"]),
         )
         .with_for_update(skip_locked=True)
     )
@@ -239,7 +239,7 @@ async def cancel_open_checkout_orders_for_user(session: AsyncSession, user_id: i
         .where(
             Order.user_id == user_id,
             Order.delivered.is_(False),
-            Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance"]),
+            Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance", "waiting_upi"]),
         )
         .order_by(Order.id.desc())
         .with_for_update(skip_locked=True)
@@ -258,7 +258,7 @@ async def cancel_order(session: AsyncSession, order_id: int, user_id: int | None
     order = (await session.execute(stmt)).scalar_one_or_none()
     if not order or (user_id is not None and order.user_id != user_id):
         return None
-    if order.status not in {"pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance"}:
+    if order.status not in {"pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance", "waiting_upi"}:
         return order
     order.status = "cancelled"
     order.expires_at = None
@@ -289,7 +289,7 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
         if available < quantity:
             raise ValueError(f"Only {available} item(s) are currently available. Please choose a lower quantity.")
 
-    open_statuses = ["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance"]
+    open_statuses = ["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance", "waiting_upi"]
     stmt = (
         select(Order)
         .where(
@@ -370,7 +370,7 @@ async def expire_unpaid_orders(session: AsyncSession) -> list[Order]:
         Order.expires_at.is_not(None),
         Order.expires_at <= now,
         Order.delivered.is_(False),
-        Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance"]),
+        Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance", "waiting_upi"]),
     ).with_for_update(skip_locked=True)
     orders = list((await session.execute(stmt)).scalars().all())
     for order in orders:
@@ -982,3 +982,64 @@ async def recent_audit_logs(session: AsyncSession, limit: int = 20):
     return list((await session.execute(
         select(AdminAuditLog).order_by(AdminAuditLog.id.desc()).limit(limit)
     )).scalars().all())
+
+
+async def record_incoming_upi(
+    session: AsyncSession,
+    utr: str,
+    amount: float,
+    sender: str | None = None,
+    raw_text: str | None = None,
+) -> IncomingUpiPayment:
+    clean_utr = utr.strip()
+    stmt = select(IncomingUpiPayment).where(IncomingUpiPayment.utr == clean_utr)
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing:
+        return existing
+
+    record = IncomingUpiPayment(
+        utr=clean_utr,
+        amount=amount,
+        sender=sender,
+        raw_text=raw_text,
+    )
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+    return record
+
+
+async def find_matching_upi_payment(
+    session: AsyncSession,
+    utr: str,
+    expected_inr: float,
+    tolerance: float = 1.0,
+) -> IncomingUpiPayment | None:
+    clean_utr = utr.strip()
+    stmt = select(IncomingUpiPayment).where(IncomingUpiPayment.utr == clean_utr)
+    record = (await session.execute(stmt)).scalar_one_or_none()
+    if not record:
+        return None
+
+    # Check that payment has not already been assigned to another order
+    if record.order_id is not None:
+        return None
+
+    # Check amount matching (allowing 1 INR tolerance)
+    if abs(float(record.amount) - float(expected_inr)) > tolerance:
+        return None
+
+    return record
+
+
+async def claim_upi_payment(
+    session: AsyncSession,
+    payment: IncomingUpiPayment,
+    order: Order,
+) -> None:
+    payment.order_id = order.id
+    order.status = "paid"
+    order.provider_payment_id = f"upi:{payment.utr}"
+    order.expires_at = None
+    await session.commit()
+

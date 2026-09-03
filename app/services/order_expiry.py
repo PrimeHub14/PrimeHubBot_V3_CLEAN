@@ -12,6 +12,8 @@ def payment_window_minutes(order) -> int:
     """Return the user-facing payment window for the order."""
     if order.payment_method in {"usdttrc20_direct", "usdtbep20_direct", "binance_auto"}:
         return 30
+    if order.payment_method == "upi_auto":
+        return 15
     return 10
 
 
@@ -22,7 +24,7 @@ def expiry_label(order) -> str:
         return "USDT BEP20"
     if order.payment_method in {"binance", "binance_auto"}:
         return "Binance Pay"
-    if order.payment_method == "upi":
+    if order.payment_method in {"upi", "upi_auto"}:
         return "UPI"
     if order.payment_method == "wallet":
         return "Wallet"

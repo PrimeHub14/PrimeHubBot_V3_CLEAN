@@ -111,9 +111,21 @@ def payment_methods_kb(product_id: int, quantity: int = 1) -> InlineKeyboardMark
         [InlineKeyboardButton(text="🟡 Pay with Binance — Auto Verify", callback_data=f"directbinance:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="🟡 Pay with USDT (BEP20) — Auto Verify", callback_data=f"directbep:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="🟢 Pay with USDT (TRC20) — Auto Verify", callback_data=f"directtrc:{product_id}:{quantity}")],
-        [InlineKeyboardButton(text="🇮🇳 Pay with UPI", callback_data=f"manual:{product_id}:{quantity}:upi")],
+        [InlineKeyboardButton(text="🇮🇳 Pay with UPI — Auto Verify", callback_data=f"directupi:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="⬅️ Back", callback_data=f"quantity:{product_id}:{quantity}")],
     ])
+
+
+def upi_waiting_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Buttons shown under UPI auto-verification card."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✍️ Submit 12-Digit UTR", callback_data=f"submitutr:{order_id}")],
+            [InlineKeyboardButton(text="🔄 Check Status", callback_data=f"checkupi:{order_id}")],
+            [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"cancelupi:{order_id}")],
+            [InlineKeyboardButton(text="🛟 Payment Help", callback_data="help:home")],
+        ]
+    )
 
 
 def binance_waiting_kb(order_id: int) -> InlineKeyboardMarkup:

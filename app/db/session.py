@@ -54,6 +54,20 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_product_views_user_created "
             "ON product_views (user_id, created_at DESC)"
         ))
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS incoming_upi_payments ("
+            "id SERIAL PRIMARY KEY, "
+            "utr VARCHAR(64) UNIQUE NOT NULL, "
+            "amount NUMERIC(10, 2) NOT NULL, "
+            "sender VARCHAR(255), "
+            "raw_text TEXT, "
+            "order_id INTEGER REFERENCES orders(id), "
+            "created_at TIMESTAMPTZ DEFAULT NOW()"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_incoming_upi_payments_utr ON incoming_upi_payments (utr)"
+        ))
 
 
 # V5 tables are created by Base.metadata.create_all above.
