@@ -93,6 +93,7 @@ async def direct_binance(call: CallbackQuery):
 
     await remove_previous_payment_message(call.bot, order)
 
+    chat_id = call.message.chat.id
     try:
         await call.message.delete()
     except Exception:
@@ -102,16 +103,18 @@ async def direct_binance(call: CallbackQuery):
     sent = None
     try:
         qr_file = make_address_qr(settings.BINANCE_PAY_ID)
-        sent = await call.message.answer_photo(
-            qr_file,
+        sent = await call.bot.send_photo(
+            chat_id=chat_id,
+            photo=qr_file,
             caption=caption,
             parse_mode="HTML",
             reply_markup=kb,
         )
     except Exception as exc:
         logger.warning(f"Failed to send Binance QR ({exc}), falling back to text.")
-        sent = await call.message.answer(
-            caption,
+        sent = await call.bot.send_message(
+            chat_id=chat_id,
+            text=caption,
             parse_mode="HTML",
             reply_markup=kb,
         )

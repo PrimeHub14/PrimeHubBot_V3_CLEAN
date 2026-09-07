@@ -71,14 +71,14 @@ async def direct_upi(call: CallbackQuery):
             order = await repo.create_order(
                 session,
                 call.from_user.id,
-                product.id,
-                product.price * quantity,
-                "INR",
+                product,
+                settings.CURRENCY,
                 "upi_auto",
                 quantity,
             )
-        except ValueError as exc:
-            await call.message.answer(str(exc))
+        except Exception as exc:
+            logger.exception(f"Failed to create UPI order: {exc}")
+            await call.message.answer(f"⚠️ Could not create order: {exc}")
             return
 
         order.status = "waiting_upi"
@@ -116,6 +116,7 @@ async def direct_upi(call: CallbackQuery):
 
     await remove_previous_payment_message(call.bot, order)
 
+    chat_id = call.message.chat.id
     # Clean up previous payment method menu so only the QR card is shown
     try:
         await call.message.delete()
@@ -126,16 +127,18 @@ async def direct_upi(call: CallbackQuery):
     sent = None
     try:
         qr_file = make_address_qr(upi_deep_link)
-        sent = await call.message.answer_photo(
-            qr_file,
+        sent = await call.bot.send_photo(
+            chat_id=chat_id,
+            photo=qr_file,
             caption=caption,
             parse_mode="HTML",
             reply_markup=kb,
         )
     except Exception as exc:
         logger.warning(f"Failed to send UPI QR ({exc}), falling back to text.")
-        sent = await call.message.answer(
-            caption,
+        sent = await call.bot.send_message(
+            chat_id=chat_id,
+            text=caption,
             parse_mode="HTML",
             reply_markup=kb,
         )

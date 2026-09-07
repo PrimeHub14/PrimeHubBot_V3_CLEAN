@@ -279,12 +279,13 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
         and settings.LOOTPAGLU_PRODUCT_ID > 0
         and int(product.id) == int(settings.LOOTPAGLU_PRODUCT_ID)
     )
-    if not product.stock_enabled and not is_supplier_product:
-        raise ValueError("This product is not configured for stock-controlled delivery")
+    is_reusable_or_manual = bool(
+        not getattr(product, "stock_enabled", True)
+        or getattr(product, "delivery_mode", "instant") == "manual"
+        or bool(getattr(product, "delivery", ""))
+    )
 
-    # Supplier-backed Gemini uses live API stock. Handlers validate that live stock
-    # before checkout, so do not reject it because the local StockItem count is zero.
-    if not is_supplier_product:
+    if not is_supplier_product and not is_reusable_or_manual:
         available = await available_stock_count(session, product.id)
         if available < quantity:
             raise ValueError(f"Only {available} item(s) are currently available. Please choose a lower quantity.")
