@@ -651,27 +651,36 @@ async def payment_menu(call: CallbackQuery, state: FSMContext):
             f"💵 Total: <b>${total:.2f}</b>\n\n"
             f"Select the method you prefer 👇"
         )
-        try:
-            await call.message.edit_text(
+        if getattr(call.message, "photo", None):
+            try:
+                await call.message.delete()
+            except Exception:
+                pass
+            sent = await call.bot.send_message(
+                call.message.chat.id,
                 text,
                 reply_markup=payment_methods_kb(product.id, quantity),
                 parse_mode="HTML",
             )
-            sent = call.message
-        except Exception:
-            data = await state.get_data()
-            old_chat = data.get("checkout_menu_chat_id")
-            old_message = data.get("checkout_menu_message_id")
-            if old_chat and old_message:
+        else:
+            try:
+                await call.message.edit_text(
+                    text,
+                    reply_markup=payment_methods_kb(product.id, quantity),
+                    parse_mode="HTML",
+                )
+                sent = call.message
+            except Exception:
                 try:
-                    await call.bot.delete_message(chat_id=int(old_chat), message_id=int(old_message))
+                    await call.message.delete()
                 except Exception:
                     pass
-            sent = await call.message.answer(
-                text,
-                reply_markup=payment_methods_kb(product.id, quantity),
-                parse_mode="HTML",
-            )
+                sent = await call.bot.send_message(
+                    call.message.chat.id,
+                    text,
+                    reply_markup=payment_methods_kb(product.id, quantity),
+                    parse_mode="HTML",
+                )
 
         await remember_checkout_menu(state, sent)
     except Exception as exc:

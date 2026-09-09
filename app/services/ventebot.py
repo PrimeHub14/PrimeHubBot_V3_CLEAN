@@ -192,8 +192,6 @@ async def get_effective_product_stock(session, product) -> int:
     """Unified stock calculator for all product types (Local, VenteBot, LootPaglu, Manual)."""
     if not product:
         return 0
-    if not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
-        return 999
 
     # 1. VenteBot Reseller API product
     v_id = get_ventebot_target_id(product)
@@ -212,6 +210,10 @@ async def get_effective_product_stock(session, product) -> int:
             return await live_stock(product.id, 0)
     except Exception:
         pass
+
+    # 3. Non-stock enabled or manual delivery items
+    if not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
+        return 999
 
     # 3. Local inventory from database
     try:

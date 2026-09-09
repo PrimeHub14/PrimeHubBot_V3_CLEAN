@@ -68,6 +68,7 @@ def product_list_kb(products: list[Product], stock_counts: dict[int, int] | None
 def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarkup:
     if available_stock > 0:
         rows = [
+            [InlineKeyboardButton(text="✅ Continue to Payment", callback_data=f"paymenu:{product_id}:1")],
             [InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")],
             [InlineKeyboardButton(text="📂 Back to Categories", callback_data="shop")],
         ]
