@@ -200,11 +200,58 @@ async def _deliver_paglu_order(bot: Bot, session: AsyncSession, order: Order) ->
     await mark_delivered(session, order)
 
 
+async def _deliver_ventebot_order(bot: Bot, session: AsyncSession, order: Order) -> None:
+    from app.services.ventebot import ventebot_client, VenteBotError
+
+    quantity = max(1, order.quantity or 1)
+    v_order = await ventebot_client.create_order(
+        ventebot_product_id=order.product.ventebot_product_id,
+        quantity=quantity,
+        customer_reference=f"telegram_user_{order.user_id}",
+    )
+
+    items = v_order.get("items") or []
+    text_items = []
+    if isinstance(items, list):
+        for index, itm in enumerate(items, start=1):
+            if isinstance(itm, dict):
+                account_data = itm.get("account_data") or str(itm)
+                text_items.append((index, account_data))
+
+    if not text_items:
+        status_info = v_order.get("status") or "Processed"
+        text_items.append((1, f"Status: {status_info} (Vente Order #{v_order.get('id')})"))
+
+    rendered = [
+        f"🎁 <b>Item {i} of {len(text_items)}</b>\n┌────────────────\n<code>{escape(content)}</code>\n└────────────────"
+        for i, content in text_items
+    ]
+    await bot.send_message(
+        order.user_id,
+        delivery_header(order)
+        + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+        + "\n\n".join(rendered)
+        + note_block(order)
+        + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.\n🛟 Need help? Open /help and select this order.",
+        parse_mode="HTML",
+    )
+
+    order.delivery_record = "\n\n".join(c for _, c in text_items)
+    order.supplier_source = "ventebot"
+    order.supplier_order_id = str(v_order.get("id") or "")
+    order.supplier_status = str(v_order.get("status") or "COMPLETED")
+    await mark_delivered(session, order)
+
+
 async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
     if order.delivered:
         return
 
     product = order.product
+
+    if getattr(product, "ventebot_product_id", None):
+        await _deliver_ventebot_order(bot, session, order)
+        return
 
     if is_paglu_product(product.id):
         await _deliver_paglu_order(bot, session, order)
@@ -318,7 +365,6 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
             await release_stock_items(session, order.id)
             raise
     elif product.is_file_id:
-        raise RuntimeError("This product has no unique stock items. Add stock before delivery.")
         await bot.send_document(
             order.user_id,
             product.delivery,
@@ -335,7 +381,6 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
                 parse_mode="HTML",
             )
     else:
-        raise RuntimeError("This product has no unique stock items. Add stock before delivery.")
         await bot.send_message(
             order.user_id,
             (

@@ -46,6 +46,14 @@ PAYMENT_LABELS = {
 async def product_available_stock(session, product) -> int:
     if not product:
         return 0
+    # If product is connected to VenteBot, query real-time live stock
+    if getattr(product, "ventebot_product_id", None):
+        try:
+            from app.services.ventebot import ventebot_client
+            if ventebot_client.is_configured():
+                return await ventebot_client.get_stock(product.ventebot_product_id)
+        except Exception as exc:
+            logger.warning(f"Error fetching VenteBot live stock for #{product.id}: {exc}")
     if not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
         return 999
     local = await repo.available_stock_count(session, product.id)
@@ -87,21 +95,35 @@ def welcome_text(first_name: str | None = None) -> str:
     )
 
 
-def product_caption(product) -> str:
+def product_caption(product, available_stock: int = 0) -> str:
     safe_name = escape(product.name or "")
     safe_category = escape(product.category or "")
-    safe_description = escape(product.description or "")
-    return (
+    
+    header = (
         f"🔥 <b>{safe_name}</b>\n\n"
         f"📂 Category: <b>{safe_category}</b>\n"
-        f"⚡ Delivery: <b>Instant after confirmation</b>\n"
-        f"🛡️ Support: <b>Available</b>\n"
-        f"📦 Sold: <b>{product.sold_count or 0}</b>\n\n"
-        f"{safe_description}\n\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"💵 Price: <b>${float(product.price):.2f}</b>\n"
-        f"👇 Choose a payment method to continue."
+        f"⚡ Delivery: <b>Instant 24/7 Automated Delivery</b>\n"
+        f"📦 Live Stock: <b>{available_stock}</b>\n"
     )
+    if available_stock <= 0:
+        header += "❌ <b>Currently out of stock</b>\n"
+    header += "\n"
+
+    footer = (
+        f"\n━━━━━━━━━━━━━━\n"
+        f"💵 Price: <b>${float(product.price):.2f} USD</b>\n"
+        f"👇 Choose an option below to proceed."
+    )
+
+    # Telegram limit for photo caption is 1024 characters.
+    max_desc_len = max(50, 1020 - len(header) - len(footer))
+    raw_desc = (product.description or "").strip()
+    if len(raw_desc) > max_desc_len:
+        desc = escape(raw_desc[:max_desc_len - 3]) + "..."
+    else:
+        desc = escape(raw_desc)
+
+    return f"{header}{desc}{footer}"
 
 
 @router.message(CommandStart())
@@ -124,6 +146,12 @@ async def home(call: CallbackQuery):
 
 @router.callback_query(F.data == "shop")
 async def shop(call: CallbackQuery):
+    await call.answer()
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+
     async with SessionLocal() as session:
         categories = await repo.list_categories(session)
         stock_totals, all_stock = await repo.category_stock_totals(session)
@@ -135,14 +163,14 @@ async def shop(call: CallbackQuery):
             stock_totals[supplier_product.category] = max(0, int(stock_totals.get(supplier_product.category, 0)) + delta)
             all_stock = max(0, int(all_stock) + delta)
     if not categories:
-        await call.message.answer("No products are available yet.")
+        await call.bot.send_message(call.message.chat.id, "No products are available yet.")
     else:
-        await call.message.answer(
+        await call.bot.send_message(
+            call.message.chat.id,
             "📂 <b>Choose a category</b>",
             reply_markup=categories_kb(categories, stock_totals, all_stock),
             parse_mode="HTML",
         )
-    await call.answer()
 
 
 @router.message(Command("products"))
@@ -158,6 +186,7 @@ async def products_cmd(message: Message):
 
 @router.callback_query(F.data.startswith("cat:"))
 async def category_products(call: CallbackQuery):
+    await call.answer()
     category = call.data.split(":", 1)[1]
     async with SessionLocal() as session:
         if category == "__all__":
@@ -167,11 +196,18 @@ async def category_products(call: CallbackQuery):
             products = await repo.list_products_by_category(session, category)
             title = f"📂 {category}"
         stock_counts = await product_stock_map(session, products)
-    if not products:
-        await call.message.answer("No products in this category yet.")
-    else:
-        await call.message.answer(f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
-    await call.answer()
+
+    try:
+        await call.message.edit_text(f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
+    except Exception:
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+        if not products:
+            await call.bot.send_message(call.message.chat.id, "No products in this category yet.")
+        else:
+            await call.bot.send_message(call.message.chat.id, f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "reviews")
@@ -268,13 +304,10 @@ async def show_product(call: CallbackQuery):
                 return
             available_stock = await product_available_stock(session, product)
 
-        caption = product_caption(product)
-        caption += f"\n📦 Available stock: <b>{available_stock}</b>"
-        if available_stock <= 0:
-            caption += "\n❌ <b>Currently out of stock — purchasing is disabled</b>"
-
+        caption = product_caption(product, available_stock)
         kb = product_kb(product.id, available_stock)
 
+        chat_id = call.message.chat.id
         # Delete previous menu to keep the chat clean and compact
         try:
             await call.message.delete()
@@ -284,38 +317,27 @@ async def show_product(call: CallbackQuery):
         sent = False
         if product.image_file_id:
             try:
-                if len(caption) <= 1024:
-                    await call.message.answer_photo(
-                        product.image_file_id,
-                        caption=caption,
-                        reply_markup=kb,
-                        parse_mode="HTML",
-                    )
-                else:
-                    await call.message.answer_photo(product.image_file_id)
-                    await call.message.answer(caption, reply_markup=kb, parse_mode="HTML")
+                await call.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=product.image_file_id,
+                    caption=caption,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                )
                 sent = True
             except Exception as exc:
                 logging.warning(f"Failed to send product photo for #{product.id} ({exc}), falling back to text.")
 
         if not sent:
             try:
-                await call.message.answer(caption, reply_markup=kb, parse_mode="HTML")
-            except Exception as exc:
-                logging.warning(f"Failed to send HTML product message for #{product.id} ({exc}), falling back to plain text.")
-                plain_caption = (
-                    f"🔥 {product.name}\n\n"
-                    f"📂 Category: {product.category}\n"
-                    f"⚡ Delivery: Instant after confirmation\n"
-                    f"🛡️ Support: Available\n"
-                    f"📦 Sold: {product.sold_count or 0}\n\n"
-                    f"{product.description}\n\n"
-                    f"━━━━━━━━━━━━━━\n"
-                    f"💵 Price: ${float(product.price):.2f}\n"
-                    f"📦 Available stock: {available_stock}\n"
-                    f"👇 Choose a payment method to continue."
+                await call.bot.send_message(
+                    chat_id=chat_id,
+                    text=caption,
+                    reply_markup=kb,
+                    parse_mode="HTML",
                 )
-                await call.message.answer(plain_caption, reply_markup=kb)
+            except Exception as exc:
+                logging.warning(f"Failed to send HTML product message for #{product.id} ({exc})")
     except Exception as exc:
         logging.exception(f"Unhandled error in show_product: {exc}")
         await call.message.answer("⚠️ Could not load product details. Please try again.")

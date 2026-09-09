@@ -30,12 +30,10 @@ class UPIPayState(StatesGroup):
     waiting_utr = State()
 
 
-def compute_upi_inr(amount_usd: float, order_id: int) -> float:
-    """Add deterministic unique paise (0.01 to 0.89) based on order_id to prevent collision."""
+def compute_upi_inr(amount_usd: float, order_id: int = 0) -> int:
+    """Return clean rounded integer INR amount (no decimals) as requested by user."""
     inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
-    base_inr = float(amount_usd) * inr_rate
-    unique_paise = ((int(order_id) * 7 + 11) % 89) / 100.0
-    return round(float(int(base_inr)) + unique_paise, 2)
+    return int(round(float(amount_usd) * inr_rate))
 
 
 @router.callback_query(F.data.startswith("directupi:"))
@@ -92,7 +90,7 @@ async def direct_upi(call: CallbackQuery):
     upi_deep_link = (
         f"upi://pay?pa={settings.UPI_ID}"
         f"&pn={quote_plus(settings.UPI_NAME)}"
-        f"&am={inr_amount:.2f}&cu=INR"
+        f"&am={inr_amount}&cu=INR"
         f"&tn=Order_{order.id}"
     )
 
@@ -103,13 +101,13 @@ async def direct_upi(call: CallbackQuery):
         f"📦 Product: <b>{safe_name}</b>\n"
         f"🔢 Quantity: <b>{quantity}</b>\n"
         f"💵 Total: <b>${float(order.amount):.2f} USD</b>\n"
-        f"🇮🇳 Pay in INR: <b>₹{inr_amount:,.2f}</b> <i>(@ ₹{inr_rate:.1f}/$)</i>\n\n"
+        f"🇮🇳 Pay in INR: <b>₹{inr_amount:,}</b> <i>(@ ₹{inr_rate:.1f}/$)</i>\n\n"
         f"UPI ID:\n<code>{settings.UPI_ID}</code>\n"
         f"Payee Name: <b>{escape(settings.UPI_NAME)}</b>\n\n"
         "⏳ Payment window: <b>15 minutes</b>\n\n"
         "🔍 <b>How to Pay & Receive Instantly:</b>\n"
         "1. Scan the QR code above with <b>PhonePe, GPay, or Paytm</b>.\n"
-        f"2. Pay exactly <b>₹{inr_amount:.2f}</b> (paise included for instant match).\n"
+        f"2. Pay exactly <b>₹{inr_amount:,}</b>.\n"
         "3. Tap <b>'✍️ Submit 12-Digit UTR'</b> below and enter your 12-digit UPI reference number.\n\n"
         "⚡ <i>Your payment is verified against PhonePe and your product is delivered in seconds!</i>"
     )
@@ -250,7 +248,7 @@ async def upi_receive_utr(message: Message, state: FSMContext):
             await session.commit()
             await message.answer(
                 f"⏳ <b>UTR Recorded:</b> <code>{utr}</code>\n\n"
-                f"We are checking PhonePe for your payment of <b>₹{expected_inr:,.2f}</b>.\n\n"
+                f"We are checking PhonePe for your payment of <b>₹{expected_inr:,}</b>.\n\n"
                 "• Notifications usually arrive within 5–15 seconds.\n"
                 "• As soon as PhonePe notifies our system, your product will be delivered automatically here!\n"
                 "• If it doesn't arrive shortly, tap <b>'Check Status'</b> on the payment card above.",

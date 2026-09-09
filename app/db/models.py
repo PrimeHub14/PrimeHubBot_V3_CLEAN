@@ -56,6 +56,7 @@ class Product(Base):
     sold_count: Mapped[int] = mapped_column(Integer, default=0)
     stock_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     delivery_mode: Mapped[str] = mapped_column(String(20), default="instant", nullable=False)
+    ventebot_product_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

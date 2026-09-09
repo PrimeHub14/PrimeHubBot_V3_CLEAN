@@ -168,7 +168,7 @@ def create_app(bot: Bot) -> web.Application:
 
                 for p_order in pending_orders:
                     expected = compute_upi_inr(float(p_order.amount), p_order.id)
-                    if abs(expected - amount_val) <= 0.05 or abs(round(float(p_order.amount) * inr_rate, 2) - amount_val) <= 0.5:
+                    if abs(expected - amount_val) <= 1.0:
                         matched_order = p_order
                         break
 

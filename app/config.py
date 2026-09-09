@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     UPI_NAME: str = "Prime Hub"
     UPI_INR_PER_USD: float = 86.5
 
+    # VenteBot Reseller API integration
+    VENTEBOT_BASE_URL: str = "https://ventetelegrambotrailway-production.up.railway.app"
+    VENTEBOT_API_KEY: str = ""
+    VENTEBOT_TIMEOUT_SECONDS: int = 25
+    VENTEBOT_CACHE_SECONDS: int = 30
+
     # Direct USDT TRC20 payment verification
     TRC20_RECEIVE_ADDRESS: str = ""
     TRONGRID_API_KEY: str = ""
