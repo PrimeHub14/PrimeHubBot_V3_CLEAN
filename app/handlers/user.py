@@ -46,12 +46,14 @@ PAYMENT_LABELS = {
 async def product_available_stock(session, product) -> int:
     if not product:
         return 0
-    # If product is connected to VenteBot, query real-time live stock
-    if getattr(product, "ventebot_product_id", None):
+    # If product is connected to VenteBot (via DB link or env variable like Paglu), query live stock
+    from app.services.ventebot import get_ventebot_target_id
+    v_id = get_ventebot_target_id(product)
+    if v_id:
         try:
             from app.services.ventebot import ventebot_client
             if ventebot_client.is_configured():
-                return await ventebot_client.get_stock(product.ventebot_product_id)
+                return await ventebot_client.get_stock(v_id)
         except Exception as exc:
             logger.warning(f"Error fetching VenteBot live stock for #{product.id}: {exc}")
     if not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
@@ -62,7 +64,7 @@ async def product_available_stock(session, product) -> int:
 
 async def product_stock_map(session, products) -> dict[int, int]:
     result: dict[int, int] = {}
-    from app.services.ventebot import ventebot_client
+    from app.services.ventebot import ventebot_client, get_ventebot_target_id
     vente_stock_map: dict[int, int] = {}
     if ventebot_client.is_configured():
         try:
@@ -71,8 +73,9 @@ async def product_stock_map(session, products) -> dict[int, int]:
             pass
 
     for product in products:
-        if getattr(product, "ventebot_product_id", None):
-            result[product.id] = vente_stock_map.get(int(product.ventebot_product_id), 0)
+        v_id = get_ventebot_target_id(product)
+        if v_id:
+            result[product.id] = vente_stock_map.get(int(v_id), 0)
         elif not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
             result[product.id] = 999
         else:
@@ -177,14 +180,15 @@ async def shop(call: CallbackQuery):
             stock_totals[supplier_product.category] = max(0, int(stock_totals.get(supplier_product.category, 0)) + delta)
             all_stock = max(0, int(all_stock) + delta)
 
-        from app.services.ventebot import ventebot_client
+        from app.services.ventebot import ventebot_client, get_ventebot_target_id
         if ventebot_client.is_configured():
             try:
                 v_map = await ventebot_client.get_all_stock_map()
                 all_prods = await repo.list_products(session)
                 for p in all_prods:
-                    if getattr(p, "ventebot_product_id", None):
-                        v_stock = v_map.get(int(p.ventebot_product_id), 0)
+                    v_id = get_ventebot_target_id(p)
+                    if v_id:
+                        v_stock = v_map.get(v_id, 0)
                         stock_totals[p.category] = max(0, int(stock_totals.get(p.category, 0)) + v_stock)
                         all_stock = max(0, int(all_stock) + v_stock)
             except Exception:

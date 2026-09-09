@@ -933,8 +933,10 @@ async def vente_list_command(message: Message):
             p_stock = p.get("stock")
             stock_str = "Unlimited/Active" if p_stock is None else f"{p_stock} in stock"
             lines.append(f"• <code>#{p_id}</code> <b>{p_name}</b> — ${float(p_price):.2f} ({stock_str})")
-        lines.append("\n💡 <i>To link a product: /ventelink PRIMEHUB_ID VENTE_ID</i>")
-        lines.append("💡 <i>To auto-sync all: /ventesync</i>")
+        lines.append("\n💡 <b>How to link a product:</b>")
+        lines.append("1. Create your product in your bot with your own price (e.g. #7 in AI Tools).")
+        lines.append("2. Run: <code>/ventelink PRIMEHUB_ID VENTE_ID</code> (e.g. <code>/ventelink 7 12</code>)")
+        lines.append("3. Live stock & instant delivery will be connected automatically!")
         await message.answer("\n".join(lines), parse_mode="HTML")
     except Exception as exc:
         await message.answer(f"❌ Error fetching VenteBot catalogue: <code>{exc}</code>", parse_mode="HTML")
@@ -961,38 +963,12 @@ async def vente_link_command(message: Message):
     await message.answer(
         f"✅ <b>Linked successfully!</b>\n\n"
         f"Prime Hub Product: <b>{product.name}</b> (<code>#{primehub_id}</code>)\n"
-        f"VenteBot Product ID: <code>#{ventebot_id}</code>\n\n"
-        "⚡ <i>Live stock and automated delivery are now active for this product!</i>",
+        f"VenteBot Wholesale ID: <code>#{ventebot_id}</code>\n"
+        f"Selling Price: <b>${float(product.price):.2f} USD</b>\n"
+        f"Category: <b>{product.category}</b>\n\n"
+        "⚡ <i>Live stock and automated delivery are now connected to VenteBot!</i>",
         parse_mode="HTML",
     )
-
-
-@router.message(Command("ventesync"))
-async def vente_sync_command(message: Message):
-    if not admin_only(message):
-        return
-    from app.services.ventebot import ventebot_client
-    if not ventebot_client.is_configured():
-        await message.answer(
-            "⚠️ <b>VenteBot API Key is missing.</b>\n\n"
-            "Please set <code>VENTEBOT_API_KEY</code> in your Railway project Variables, then run /ventesync again.",
-            parse_mode="HTML",
-        )
-        return
-    status_msg = await message.answer("⏳ Syncing products and live stock from VenteBot...")
-    try:
-        async with SessionLocal() as session:
-            created, updated = await ventebot_client.sync_all_products(session)
-        await status_msg.edit_text(
-            "✅ <b>VenteBot Catalog Sync Complete!</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"✨ New products imported: <b>{created}</b>\n"
-            f"🔄 Existing products updated: <b>{updated}</b>\n\n"
-            "⚡ <i>All product live stock is now synchronized automatically!</i>",
-            parse_mode="HTML",
-        )
-    except Exception as exc:
-        await status_msg.edit_text(f"❌ VenteBot sync failed: <code>{exc}</code>", parse_mode="HTML")
 
 
 @router.message(Command("deletecategory"))

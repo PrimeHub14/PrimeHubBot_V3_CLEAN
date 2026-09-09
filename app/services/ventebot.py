@@ -18,6 +18,29 @@ class VenteBotError(RuntimeError):
     pass
 
 
+def is_ventebot_product(product) -> bool:
+    if not product:
+        return False
+    if getattr(product, "ventebot_product_id", None):
+        return True
+    v_prod_id = getattr(settings, "VENTEBOT_PRODUCT_ID", 0)
+    if v_prod_id and int(product.id) == int(v_prod_id):
+        return True
+    return False
+
+
+def get_ventebot_target_id(product) -> int | None:
+    if not product:
+        return None
+    if getattr(product, "ventebot_product_id", None):
+        return int(product.ventebot_product_id)
+    v_prod_id = getattr(settings, "VENTEBOT_PRODUCT_ID", 0)
+    v_serv_id = getattr(settings, "VENTEBOT_SERVICE_ID", 0)
+    if v_prod_id and int(product.id) == int(v_prod_id) and v_serv_id:
+        return int(v_serv_id)
+    return None
+
+
 class VenteBotClient:
     def __init__(self) -> None:
         self.base_url = (getattr(settings, "VENTEBOT_BASE_URL", "") or "https://ventetelegrambotrailway-production.up.railway.app").rstrip("/")
@@ -155,71 +178,6 @@ class VenteBotClient:
         if not isinstance(data, dict):
             raise VenteBotError("Unexpected response format from VenteBot order creation")
         return data
-
-    async def sync_all_products(self, session) -> tuple[int, int]:
-        """
-        Sync or import all products from VenteBot into Prime Hub database.
-        Returns (created_count, updated_count).
-        """
-        products = await self.get_products(force_refresh=True)
-        if not products:
-            return 0, 0
-
-        created = 0
-        updated = 0
-
-        stmt = select(Product)
-        existing_products = list((await session.execute(stmt)).scalars().all())
-        existing_by_v_id: dict[int, Product] = {
-            p.ventebot_product_id: p for p in existing_products if getattr(p, "ventebot_product_id", None) is not None
-        }
-        existing_by_name: dict[str, Product] = {
-            p.name.strip().lower(): p for p in existing_products if p.name
-        }
-
-        for p in products:
-            if not isinstance(p, dict):
-                continue
-
-            v_id = int(p.get("id") or 0)
-            if v_id <= 0:
-                continue
-
-            name = str(p.get("name") or f"Vente Product #{v_id}").strip()
-            category = str(p.get("category") or "Vente Services").strip()
-            description = str(p.get("description") or "").strip()
-            price_usd = float(p.get("price_usd") or p.get("reseller_price_usd") or 5.0)
-
-            target_prod = existing_by_v_id.get(v_id) or existing_by_name.get(name.lower())
-
-            if target_prod:
-                target_prod.ventebot_product_id = v_id
-                target_prod.category = category
-                target_prod.active = True
-                target_prod.stock_enabled = False
-                target_prod.delivery_mode = "instant"
-                if description and not target_prod.description:
-                    target_prod.description = description
-                updated += 1
-            else:
-                new_prod = Product(
-                    name=name,
-                    category=category,
-                    description=description,
-                    price=price_usd,
-                    delivery="Delivered automatically via VenteBot API",
-                    delivery_note="Instant 24/7 delivery direct from provider",
-                    is_file_id=False,
-                    active=True,
-                    stock_enabled=False,
-                    delivery_mode="instant",
-                    ventebot_product_id=v_id,
-                )
-                session.add(new_prod)
-                created += 1
-
-        await session.commit()
-        return created, updated
 
 
 ventebot_client = VenteBotClient()

@@ -200,12 +200,16 @@ async def _deliver_paglu_order(bot: Bot, session: AsyncSession, order: Order) ->
     await mark_delivered(session, order)
 
 
-async def _deliver_ventebot_order(bot: Bot, session: AsyncSession, order: Order) -> None:
-    from app.services.ventebot import ventebot_client, VenteBotError
+async def _deliver_ventebot_order(bot: Bot, session: AsyncSession, order: Order, target_v_id: int | None = None) -> None:
+    from app.services.ventebot import ventebot_client, get_ventebot_target_id, VenteBotError
+
+    v_id = target_v_id or get_ventebot_target_id(order.product)
+    if not v_id:
+        raise RuntimeError(f"Product #{order.product_id} is not linked to a VenteBot target ID")
 
     quantity = max(1, order.quantity or 1)
     v_order = await ventebot_client.create_order(
-        ventebot_product_id=order.product.ventebot_product_id,
+        ventebot_product_id=v_id,
         quantity=quantity,
         customer_reference=f"telegram_user_{order.user_id}",
     )
@@ -249,8 +253,10 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
 
     product = order.product
 
-    if getattr(product, "ventebot_product_id", None):
-        await _deliver_ventebot_order(bot, session, order)
+    from app.services.ventebot import get_ventebot_target_id
+    v_target_id = get_ventebot_target_id(product)
+    if v_target_id:
+        await _deliver_ventebot_order(bot, session, order, v_target_id)
         return
 
     if is_paglu_product(product.id):

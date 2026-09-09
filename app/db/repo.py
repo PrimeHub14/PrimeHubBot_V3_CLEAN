@@ -42,8 +42,13 @@ async def list_products(session: AsyncSession, only_active: bool = True) -> list
 
 
 async def list_categories(session: AsyncSession) -> list[str]:
-    rows = (await session.execute(select(Product.category).where(Product.active.is_(True)).distinct().order_by(Product.category))).all()
-    return [r[0] for r in rows if r[0]]
+    rows = (await session.execute(
+        select(Product.category)
+        .where(Product.active.is_(True), Product.category != "Vente Services")
+        .distinct()
+        .order_by(Product.category)
+    )).all()
+    return [r[0] for r in rows if r[0] and r[0] != "Vente Services"]
 
 
 async def category_stock_totals(session: AsyncSession) -> tuple[dict[str, int], int]:
@@ -55,12 +60,12 @@ async def category_stock_totals(session: AsyncSession) -> tuple[dict[str, int], 
             StockItem,
             (StockItem.product_id == Product.id) & (StockItem.status == "available"),
         )
-        .where(Product.active.is_(True))
+        .where(Product.active.is_(True), Product.category != "Vente Services")
         .group_by(Product.category)
         .order_by(Product.category)
     )
     rows = (await session.execute(stmt)).all()
-    totals = {str(category): int(count or 0) for category, count in rows if category}
+    totals = {str(category): int(count or 0) for category, count in rows if category and str(category) != "Vente Services"}
     return totals, sum(totals.values())
 
 

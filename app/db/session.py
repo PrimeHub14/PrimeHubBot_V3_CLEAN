@@ -28,6 +28,8 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_note TEXT DEFAULT '' NOT NULL"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_mode VARCHAR(20) DEFAULT 'instant' NOT NULL"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS ventebot_product_id INTEGER"))
+        # Clean up auto-imported Vente Services products so only curated custom products appear
+        await conn.execute(text("DELETE FROM products WHERE category = 'Vente Services'"))
         # All products require unique stock before checkout. Existing products become out of stock until /addstock is used.
         await conn.execute(text("UPDATE products SET stock_enabled = TRUE WHERE stock_enabled IS DISTINCT FROM TRUE"))
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50)"))

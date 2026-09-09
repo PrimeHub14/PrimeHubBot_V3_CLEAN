@@ -45,8 +45,10 @@ class Settings(BaseSettings):
     # VenteBot Reseller API integration
     VENTEBOT_BASE_URL: str = "https://ventetelegrambotrailway-production.up.railway.app"
     VENTEBOT_API_KEY: str = ""
-    VENTEBOT_TIMEOUT_SECONDS: int = 25
-    VENTEBOT_CACHE_SECONDS: int = 30
+    VENTEBOT_PRODUCT_ID: int = 0
+    VENTEBOT_SERVICE_ID: int = 0
+    VENTEBOT_TIMEOUT_SECONDS: int = 15
+    VENTEBOT_CACHE_SECONDS: int = 60
 
     # Direct USDT TRC20 payment verification
     TRC20_RECEIVE_ADDRESS: str = ""
