@@ -994,3 +994,59 @@ async def vente_sync_command(message: Message):
     except Exception as exc:
         await status_msg.edit_text(f"❌ VenteBot sync failed: <code>{exc}</code>", parse_mode="HTML")
 
+
+@router.message(Command("deletecategory"))
+async def delete_category_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Usage: /deletecategory CATEGORY_NAME\nExample: /deletecategory Vente Services")
+        return
+    target_category = parts[1].strip()
+    async with SessionLocal() as session:
+        stmt = select(Product).where(Product.category.ilike(target_category))
+        prods = list((await session.execute(stmt)).scalars().all())
+        if not prods:
+            await message.answer(f"No products found in category '{target_category}'.")
+            return
+        count = len(prods)
+        for p in prods:
+            await session.delete(p)
+        await session.commit()
+    await message.answer(f"🗑️ <b>Deleted category '{target_category}'</b> and removed {count} product(s).", parse_mode="HTML")
+
+
+@router.message(Command("clearventeproducts"))
+async def clear_vente_products_command(message: Message):
+    if not admin_only(message):
+        return
+    async with SessionLocal() as session:
+        stmt = select(Product).where(Product.category == "Vente Services")
+        prods = list((await session.execute(stmt)).scalars().all())
+        count = len(prods)
+        for p in prods:
+            await session.delete(p)
+        await session.commit()
+    await message.answer(f"🗑️ Cleaned up {count} auto-imported products from 'Vente Services'.\nYour custom categories are untouched.", parse_mode="HTML")
+
+
+@router.message(Command("venteunlink"))
+async def vente_unlink_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Usage: /venteunlink PRIMEHUB_PRODUCT_ID\nExample: /venteunlink 5")
+        return
+    primehub_id = int(parts[1])
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, primehub_id)
+        if not product:
+            await message.answer(f"Product #{primehub_id} not found.")
+            return
+        product.ventebot_product_id = None
+        await session.commit()
+    await message.answer(f"✅ Product #{primehub_id} ({product.name}) unlinked from VenteBot.")
+
+

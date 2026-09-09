@@ -62,8 +62,22 @@ async def product_available_stock(session, product) -> int:
 
 async def product_stock_map(session, products) -> dict[int, int]:
     result: dict[int, int] = {}
+    from app.services.ventebot import ventebot_client
+    vente_stock_map: dict[int, int] = {}
+    if ventebot_client.is_configured():
+        try:
+            vente_stock_map = await ventebot_client.get_all_stock_map()
+        except Exception:
+            pass
+
     for product in products:
-        result[product.id] = await product_available_stock(session, product)
+        if getattr(product, "ventebot_product_id", None):
+            result[product.id] = vente_stock_map.get(int(product.ventebot_product_id), 0)
+        elif not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
+            result[product.id] = 999
+        else:
+            local = await repo.available_stock_count(session, product.id)
+            result[product.id] = await live_stock(product.id, local)
     return result
 
 def format_order_time(value) -> str:
@@ -162,6 +176,19 @@ async def shop(call: CallbackQuery):
             delta = api_supplier_stock - local_supplier_stock
             stock_totals[supplier_product.category] = max(0, int(stock_totals.get(supplier_product.category, 0)) + delta)
             all_stock = max(0, int(all_stock) + delta)
+
+        from app.services.ventebot import ventebot_client
+        if ventebot_client.is_configured():
+            try:
+                v_map = await ventebot_client.get_all_stock_map()
+                all_prods = await repo.list_products(session)
+                for p in all_prods:
+                    if getattr(p, "ventebot_product_id", None):
+                        v_stock = v_map.get(int(p.ventebot_product_id), 0)
+                        stock_totals[p.category] = max(0, int(stock_totals.get(p.category, 0)) + v_stock)
+                        all_stock = max(0, int(all_stock) + v_stock)
+            except Exception:
+                pass
     if not categories:
         await call.bot.send_message(call.message.chat.id, "No products are available yet.")
     else:

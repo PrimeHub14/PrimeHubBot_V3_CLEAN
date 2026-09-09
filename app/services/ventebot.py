@@ -21,10 +21,11 @@ class VenteBotError(RuntimeError):
 class VenteBotClient:
     def __init__(self) -> None:
         self.base_url = (getattr(settings, "VENTEBOT_BASE_URL", "") or "https://ventetelegrambotrailway-production.up.railway.app").rstrip("/")
-        self.timeout = aiohttp.ClientTimeout(total=getattr(settings, "VENTEBOT_TIMEOUT_SECONDS", 25))
+        self.timeout = aiohttp.ClientTimeout(total=getattr(settings, "VENTEBOT_TIMEOUT_SECONDS", 15))
         self._cached_products: list[dict[str, Any]] = []
         self._cache_time: float = 0.0
         self._etag: str = ""
+        self._stock_map: dict[int, int] = {}
         self._lock = asyncio.Lock()
 
     @property
@@ -53,7 +54,8 @@ class VenteBotClient:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 async with session.request(method, url, headers=self._headers(), json=payload) as response:
                     if response.status == 304:
-                        return None
+                        self._cache_time = time.time()
+                        return self._cached_products
 
                     raw = await response.text()
                     try:
@@ -81,7 +83,7 @@ class VenteBotClient:
 
     async def get_products(self, force_refresh: bool = False) -> list[dict[str, Any]]:
         """Fetch all products with live stock from VenteBot (cached for TTL seconds)."""
-        cache_ttl = getattr(settings, "VENTEBOT_CACHE_SECONDS", 30)
+        cache_ttl = getattr(settings, "VENTEBOT_CACHE_SECONDS", 60)
         now = time.time()
 
         if not force_refresh and self._cached_products and (now - self._cache_time) < cache_ttl:
@@ -101,6 +103,7 @@ class VenteBotClient:
                     if isinstance(products, list):
                         self._cached_products = products
                         self._cache_time = time.time()
+                self._update_stock_map()
             except Exception as exc:
                 logger.warning(f"Failed to fetch VenteBot products ({exc}), using cached snapshot if available.")
                 if not self._cached_products:
@@ -108,19 +111,26 @@ class VenteBotClient:
 
             return self._cached_products
 
+    def _update_stock_map(self) -> None:
+        new_map: dict[int, int] = {}
+        for p in self._cached_products:
+            if isinstance(p, dict):
+                v_id = int(p.get("id") or 0)
+                if v_id > 0:
+                    stock = p.get("stock")
+                    new_map[v_id] = 999 if stock is None else max(0, int(stock))
+        self._stock_map = new_map
+
+    async def get_all_stock_map(self, force_refresh: bool = False) -> dict[int, int]:
+        """Returns a fast pre-computed dictionary of {ventebot_product_id: stock} in 0ms."""
+        if not self._stock_map or force_refresh:
+            await self.get_products(force_refresh=force_refresh)
+        return self._stock_map
+
     async def get_stock(self, ventebot_product_id: int) -> int:
         """Get live stock count for a specific VenteBot product."""
-        products = await self.get_products()
-        for p in products:
-            if isinstance(p, dict) and int(p.get("id") or 0) == int(ventebot_product_id):
-                stock = p.get("stock")
-                if stock is None:
-                    return 999
-                try:
-                    return max(0, int(stock))
-                except (ValueError, TypeError):
-                    return 0
-        return 0
+        stock_map = await self.get_all_stock_map()
+        return stock_map.get(int(ventebot_product_id), 0)
 
     async def create_order(
         self,
