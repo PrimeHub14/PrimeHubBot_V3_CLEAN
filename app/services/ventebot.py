@@ -1,4 +1,4 @@
-﻿import asyncio
+﻿﻿import asyncio
 import json
 import logging
 import time
@@ -181,3 +181,4 @@ class VenteBotClient:
 
 
 ventebot_client = VenteBotClient()
+

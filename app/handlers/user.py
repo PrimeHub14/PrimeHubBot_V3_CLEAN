@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from html import escape
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
@@ -960,3 +960,4 @@ async def payment_proof(message: Message, state: FSMContext):
         "The admin will verify the payment. After approval, your product will be delivered automatically.",
         parse_mode="HTML",
     )
+

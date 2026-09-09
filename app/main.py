@@ -37,7 +37,10 @@ logging.basicConfig(level=logging.INFO)
 
 
 async def start_bot() -> None:
-    await init_db()
+    try:
+        await init_db()
+    except Exception as exc:
+        logging.exception(f"Error during database initialization: {exc}")
 
     bot = Bot(settings.BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
@@ -104,3 +107,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

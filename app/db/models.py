@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -253,4 +253,5 @@ class IncomingUpiPayment(Base):
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     order_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
 

@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+﻿from pydantic_settings import BaseSettings
 from pydantic import field_validator
 
 
@@ -119,3 +119,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

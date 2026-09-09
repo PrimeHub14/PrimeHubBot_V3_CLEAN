@@ -1,4 +1,4 @@
-from aiogram import F, Router
+﻿from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -1024,5 +1024,6 @@ async def vente_unlink_command(message: Message):
         product.ventebot_product_id = None
         await session.commit()
     await message.answer(f"✅ Product #{primehub_id} ({product.name}) unlinked from VenteBot.")
+
 
 

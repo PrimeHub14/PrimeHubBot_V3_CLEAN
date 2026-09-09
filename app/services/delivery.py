@@ -1,4 +1,4 @@
-from html import escape
+﻿from html import escape
 from datetime import timezone
 import csv
 import io
@@ -403,3 +403,4 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
         )
 
     await mark_delivered(session, order)
+
