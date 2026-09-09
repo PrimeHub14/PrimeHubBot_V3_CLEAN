@@ -1,8 +1,11 @@
+from datetime import datetime, timezone
+from html import escape
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.db import repo
 from app.db.session import SessionLocal
@@ -111,6 +114,12 @@ async def admin(message: Message):
         "/viewnote PRODUCT_ID - View customer instructions\n"
         "/announce MESSAGE - Post to Prime Hub update chats\n"
         "/replyticket ID MESSAGE - Reply to a ticket\n\n"
+        "🌐 <b>VenteBot Commands:</b>\n"
+        "/ventelist [search] - Browse & search VenteBot products\n"
+        "/ventefile - Download full VenteBot catalogue as text file\n"
+        "/venteinfo ID - Detailed info on a VenteBot item\n"
+        "/ventelink PRIMEHUB_ID VENTE_ID - Connect product\n"
+        "/venteme - Check VenteBot balance & connection\n\n"
         "Manual payment proofs arrive here with Approve & Deliver / Reject buttons.",
         parse_mode="HTML",
     )
@@ -912,6 +921,82 @@ async def vente_me_command(message: Message):
         await message.answer(f"❌ Failed to connect to VenteBot: <code>{exc}</code>", parse_mode="HTML")
 
 
+def make_vente_catalog_file(products: list[dict]) -> BufferedInputFile:
+    lines = [
+        "=" * 80,
+        "VENTEBOT COMPLETE RESELLER CATALOGUE",
+        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        f"Total Products Available: {len(products)}",
+        "=" * 80,
+        "",
+        f"{'ID':<6} | {'Price USD':<10} | {'Stock':<10} | {'Warranty':<10} | {'Product Name'}",
+        "-" * 80,
+    ]
+    for p in products:
+        p_id = p.get("id")
+        p_name = p.get("name", "Unknown")
+        p_price = p.get("price_usd") or p.get("reseller_price_usd") or 0.0
+        p_stock = p.get("stock")
+        stock_str = "Unlimited" if p_stock is None else str(p_stock)
+        warranty = f"{p.get('warranty_days', 0)}d"
+        lines.append(f"#{p_id:<5} | ${float(p_price):<9.2f} | {stock_str:<10} | {warranty:<10} | {p_name}")
+
+    lines.extend([
+        "",
+        "=" * 80,
+        "HOW TO LINK A PRODUCT IN PRIMEHUB:",
+        "1. Create your product in Prime Hub (via /admin -> /addproduct or admin panel)",
+        "2. Note your Prime Hub product ID (e.g. #7)",
+        "3. Find the matching VenteBot ID from this list (e.g. #180 for Warp)",
+        "4. Run: /ventelink PRIMEHUB_ID VENTEBOT_ID (e.g. /ventelink 7 180)",
+        "=" * 80,
+    ])
+    payload = "\n".join(lines).encode("utf-8")
+    return BufferedInputFile(payload, filename="VenteBot_Complete_Catalog.txt")
+
+
+def format_vente_page(products: list[dict], page: int = 1, page_size: int = 15) -> tuple[str, InlineKeyboardMarkup | None]:
+    total = len(products)
+    if total == 0:
+        return "No products found.", None
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(1, min(page, total_pages))
+    start_idx = (page - 1) * page_size
+    page_products = products[start_idx : start_idx + page_size]
+
+    lines = [
+        f"📦 <b>VenteBot Products</b> (Page {page}/{total_pages} · {total} total)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━"
+    ]
+    for p in page_products:
+        p_id = p.get("id")
+        p_name = p.get("name")
+        p_price = p.get("price_usd") or p.get("reseller_price_usd") or 0.0
+        p_stock = p.get("stock")
+        stock_str = "Unlimited" if p_stock is None else f"{p_stock} in stock"
+        lines.append(f"• <code>#{p_id}</code> <b>{escape(str(p_name))}</b> — ${float(p_price):.2f} ({stock_str})")
+
+    lines.append("\n💡 <b>Link:</b> <code>/ventelink PRIMEHUB_ID VENTE_ID</code>")
+    lines.append("🔍 <b>Search:</b> <code>/ventelist &lt;keyword&gt;</code> (e.g. <code>/ventelist capcut</code>)")
+    lines.append("📄 <b>Full export:</b> <code>/ventefile</code>")
+
+    kb_rows = []
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="⬅️ Prev", callback_data=f"ventepage:{page - 1}"))
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data="ventepage:noop"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"ventepage:{page + 1}"))
+    kb_rows.append(nav_row)
+
+    kb_rows.append([
+        InlineKeyboardButton(text="📥 Download Full Catalog (.txt)", callback_data="ventepage:export"),
+    ])
+
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+
 @router.message(Command("ventelist"))
 async def vente_list_command(message: Message):
     if not admin_only(message):
@@ -920,26 +1005,174 @@ async def vente_list_command(message: Message):
     if not ventebot_client.is_configured():
         await message.answer("⚠️ Set <code>VENTEBOT_API_KEY</code> in Railway first.", parse_mode="HTML")
         return
+
+    parts = (message.text or "").split(maxsplit=1)
+    query = parts[1].strip() if len(parts) > 1 else ""
+
     try:
         products = await ventebot_client.get_products(force_refresh=True)
         if not products:
             await message.answer("No products returned from VenteBot.")
             return
-        lines = ["📦 <b>VenteBot Available Products:</b>\n━━━━━━━━━━━━━━━━━━━━━━"]
-        for p in products[:25]:
-            p_id = p.get("id")
-            p_name = p.get("name")
-            p_price = p.get("price_usd") or p.get("reseller_price_usd") or 0.0
-            p_stock = p.get("stock")
-            stock_str = "Unlimited/Active" if p_stock is None else f"{p_stock} in stock"
-            lines.append(f"• <code>#{p_id}</code> <b>{p_name}</b> — ${float(p_price):.2f} ({stock_str})")
-        lines.append("\n💡 <b>How to link a product:</b>")
-        lines.append("1. Create your product in your bot with your own price (e.g. #7 in AI Tools).")
-        lines.append("2. Run: <code>/ventelink PRIMEHUB_ID VENTE_ID</code> (e.g. <code>/ventelink 7 12</code>)")
-        lines.append("3. Live stock & instant delivery will be connected automatically!")
-        await message.answer("\n".join(lines), parse_mode="HTML")
+
+        if query and query.lower() not in {"all", "file", "export"}:
+            q_lower = query.lower()
+            filtered = [
+                p for p in products
+                if q_lower in str(p.get("name", "")).lower()
+                or q_lower in str(p.get("description", "")).lower()
+                or q_lower == str(p.get("id"))
+            ]
+            if not filtered:
+                await message.answer(
+                    f"🔍 No VenteBot products found matching <b>'{escape(query)}'</b>.\n\n"
+                    f"• Type <code>/ventelist</code> to browse all products page by page.\n"
+                    f"• Type <code>/ventefile</code> to download the full catalogue text file.",
+                    parse_mode="HTML",
+                )
+                return
+
+            lines = [f"🔍 <b>VenteBot Results for '{escape(query)}'</b> ({len(filtered)} found):\n━━━━━━━━━━━━━━━━━━━━━━"]
+            for p in filtered[:40]:
+                p_id = p.get("id")
+                p_name = p.get("name")
+                p_price = p.get("price_usd") or p.get("reseller_price_usd") or 0.0
+                p_stock = p.get("stock")
+                stock_str = "Unlimited" if p_stock is None else f"{p_stock} in stock"
+                lines.append(f"• <code>#{p_id}</code> <b>{escape(str(p_name))}</b> — ${float(p_price):.2f} ({stock_str})")
+
+            lines.append("\n💡 <b>How to link:</b>")
+            lines.append("<code>/ventelink PRIMEHUB_ID VENTE_ID</code> (e.g. <code>/ventelink 7 142</code>)")
+            await message.answer("\n".join(lines), parse_mode="HTML")
+            return
+
+        if query.lower() in {"file", "export"}:
+            doc = make_vente_catalog_file(products)
+            await message.answer_document(
+                doc,
+                caption=f"📦 <b>VenteBot Complete Catalogue</b> ({len(products)} products)",
+                parse_mode="HTML",
+            )
+            return
+
+        text, kb = format_vente_page(products, page=1)
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
     except Exception as exc:
         await message.answer(f"❌ Error fetching VenteBot catalogue: <code>{exc}</code>", parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("ventepage:"))
+async def vente_page_callback(call: CallbackQuery):
+    if not (call.from_user and is_admin(call.from_user.id)):
+        await call.answer("Admins only.", show_alert=True)
+        return
+    action = call.data.split(":", 1)[1]
+    if action == "noop":
+        await call.answer()
+        return
+    if action == "export":
+        await call.answer("Generating catalogue file...")
+        from app.services.ventebot import ventebot_client
+        products = await ventebot_client.get_products(force_refresh=False)
+        doc = make_vente_catalog_file(products)
+        await call.message.answer_document(
+            doc,
+            caption=f"📄 <b>VenteBot Full Catalogue</b> ({len(products)} products)",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        page = int(action)
+    except ValueError:
+        await call.answer()
+        return
+
+    await call.answer()
+    from app.services.ventebot import ventebot_client
+    products = await ventebot_client.get_products(force_refresh=False)
+    text, kb = format_vente_page(products, page=page)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.message(Command("ventefile"))
+async def vente_file_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.ventebot import ventebot_client
+    if not ventebot_client.is_configured():
+        await message.answer("⚠️ Set <code>VENTEBOT_API_KEY</code> in Railway first.", parse_mode="HTML")
+        return
+    try:
+        await message.answer("⏳ Generating complete VenteBot product catalogue file...")
+        products = await ventebot_client.get_products(force_refresh=True)
+        if not products:
+            await message.answer("No products returned from VenteBot.")
+            return
+        doc = make_vente_catalog_file(products)
+        await message.answer_document(
+            doc,
+            caption=(
+                f"📦 <b>VenteBot Complete Catalogue</b>\n"
+                f"Total Products: <b>{len(products)}</b>\n\n"
+                f"Open this text file to view all product IDs, names, prices, and live stock!\n"
+                f"Use <code>/ventelink PRIMEHUB_ID VENTE_ID</code> to link any product."
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        await message.answer(f"❌ Error generating catalogue file: <code>{exc}</code>", parse_mode="HTML")
+
+
+@router.message(Command("venteinfo"))
+async def vente_info_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Usage: /venteinfo VENTEBOT_PRODUCT_ID\nExample: /venteinfo 16")
+        return
+    v_id = int(parts[1])
+    from app.services.ventebot import ventebot_client
+    if not ventebot_client.is_configured():
+        await message.answer("⚠️ Set <code>VENTEBOT_API_KEY</code> in Railway first.", parse_mode="HTML")
+        return
+    try:
+        products = await ventebot_client.get_products(force_refresh=False)
+        target = next((p for p in products if int(p.get("id") or 0) == v_id), None)
+        if not target:
+            await message.answer(f"VenteBot product #{v_id} not found.")
+            return
+
+        name = target.get("name", "Unknown")
+        desc = target.get("description", "No description")
+        price = target.get("price_usd") or target.get("reseller_price_usd") or 0.0
+        std_price = target.get("standard_price_usd")
+        stock = target.get("stock")
+        stock_str = "Unlimited" if stock is None else str(stock)
+        warranty = target.get("warranty_days", 0)
+        delivery_type = target.get("delivery_type", "instant")
+
+        text = (
+            f"ℹ️ <b>VenteBot Product Details:</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 VenteBot ID: <code>#{v_id}</code>\n"
+            f"📦 Name: <b>{escape(str(name))}</b>\n"
+            f"💵 Wholesale Cost: <b>${float(price):.2f} USD</b>\n"
+            + (f"🏷️ Standard Cost: <b>${float(std_price):.2f} USD</b>\n" if std_price else "")
+            + f"📦 Live Stock: <b>{stock_str}</b>\n"
+            f"🛡️ Warranty: <b>{warranty} days</b>\n"
+            f"⚡ Delivery Type: <b>{delivery_type}</b>\n"
+            f"📝 Description: {escape(str(desc))}\n\n"
+            f"💡 <b>To link to Prime Hub:</b>\n"
+            f"<code>/ventelink &lt;PrimeHub_Product_ID&gt; {v_id}</code>"
+        )
+        await message.answer(text, parse_mode="HTML")
+    except Exception as exc:
+        await message.answer(f"❌ Error fetching product info: <code>{exc}</code>", parse_mode="HTML")
 
 
 @router.message(Command("ventelink"))
