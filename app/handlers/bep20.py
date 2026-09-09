@@ -37,12 +37,13 @@ async def direct_bep(call: CallbackQuery):
     async with SessionLocal() as session:
         await repo.upsert_user(session, call.from_user)
         product = await repo.get_product(session, product_id)
-        local_stock = await repo.available_stock_count(session, product_id) if product else 0
-        available_stock = await live_stock(product_id, local_stock) if product else 0
-
         if not product or not product.active:
             await call.answer("Product not found.", show_alert=True)
             return
+
+        from app.services.ventebot import get_effective_product_stock
+        available_stock = await get_effective_product_stock(session, product)
+
         if available_stock <= 0:
             await call.answer("This product is out of stock.", show_alert=True)
             return
@@ -90,8 +91,15 @@ async def direct_bep(call: CallbackQuery):
 
     await remove_previous_payment_message(call.bot, order)
 
-    sent = await call.message.answer_photo(
-        make_address_qr(settings.BEP20_RECEIVE_ADDRESS),
+    chat_id = call.message.chat.id
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+
+    sent = await call.bot.send_photo(
+        chat_id=chat_id,
+        photo=make_address_qr(settings.BEP20_RECEIVE_ADDRESS),
         caption=caption,
         parse_mode="HTML",
         reply_markup=crypto_waiting_kb(order.id),

@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 from sqlalchemy import delete, func, select, or_
@@ -117,6 +117,19 @@ async def available_stock_count(session: AsyncSession, product_id: int) -> int:
         StockItem.status == "available",
     )
     return int((await session.execute(stmt)).scalar() or 0)
+
+
+async def available_stock_counts(session: AsyncSession, product_ids: list[int]) -> dict[int, int]:
+    """Batch fetch available stock counts for multiple products in a single fast query."""
+    if not product_ids:
+        return {}
+    stmt = (
+        select(StockItem.product_id, func.count(StockItem.id))
+        .where(StockItem.product_id.in_(product_ids), StockItem.status == "available")
+        .group_by(StockItem.product_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {pid: int(count or 0) for pid, count in rows}
 
 
 async def add_stock_items(session: AsyncSession, product_id: int, items: list[str], is_file_id: bool = False) -> int:
@@ -284,13 +297,20 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
         and settings.LOOTPAGLU_PRODUCT_ID > 0
         and int(product.id) == int(settings.LOOTPAGLU_PRODUCT_ID)
     )
+    is_ventebot_product = bool(
+        getattr(product, "ventebot_product_id", None)
+        or (
+            getattr(settings, "VENTEBOT_PRODUCT_ID", 0)
+            and int(product.id) == int(getattr(settings, "VENTEBOT_PRODUCT_ID", 0))
+        )
+    )
     is_reusable_or_manual = bool(
         not getattr(product, "stock_enabled", True)
         or getattr(product, "delivery_mode", "instant") == "manual"
         or bool(getattr(product, "delivery", ""))
     )
 
-    if not is_supplier_product and not is_reusable_or_manual:
+    if not is_supplier_product and not is_ventebot_product and not is_reusable_or_manual:
         available = await available_stock_count(session, product.id)
         if available < quantity:
             raise ValueError(f"Only {available} item(s) are currently available. Please choose a lower quantity.")

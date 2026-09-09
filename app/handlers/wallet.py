@@ -249,8 +249,9 @@ async def wallet_pay(call: CallbackQuery):
         product = await repo.get_product(session, product_id)
         if not product or not product.active:
             await call.answer("Product not found", show_alert=True); return
-        local_stock = await repo.available_stock_count(session, product_id)
-        available_stock = await live_stock(product_id, local_stock)
+
+        from app.services.ventebot import get_effective_product_stock
+        available_stock = await get_effective_product_stock(session, product)
         if available_stock <= 0:
             await call.answer("This product is out of stock.", show_alert=True); return
         if quantity > available_stock:

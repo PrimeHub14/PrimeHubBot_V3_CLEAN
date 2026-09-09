@@ -50,14 +50,13 @@ async def direct_upi(call: CallbackQuery):
     async with SessionLocal() as session:
         await repo.upsert_user(session, call.from_user)
         product = await repo.get_product(session, product_id)
-        local_stock = await repo.available_stock_count(session, product_id) if product else 0
-        available_stock = await live_stock(product_id, local_stock) if product else 0
-        if product and (not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual"):
-            available_stock = 999
-
         if not product or not product.active:
             await call.message.answer("Product not found or is currently unavailable.")
             return
+
+        from app.services.ventebot import get_effective_product_stock
+        available_stock = await get_effective_product_stock(session, product)
+
         if available_stock <= 0:
             await call.message.answer("This product is out of stock.")
             return

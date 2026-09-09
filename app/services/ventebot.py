@@ -1,4 +1,4 @@
-﻿﻿import asyncio
+import asyncio
 import json
 import logging
 import time
@@ -106,6 +106,9 @@ class VenteBotClient:
 
     async def get_products(self, force_refresh: bool = False) -> list[dict[str, Any]]:
         """Fetch all products with live stock from VenteBot (cached for TTL seconds)."""
+        if not self.is_configured():
+            return []
+
         cache_ttl = getattr(settings, "VENTEBOT_CACHE_SECONDS", 60)
         now = time.time()
 
@@ -146,6 +149,8 @@ class VenteBotClient:
 
     async def get_all_stock_map(self, force_refresh: bool = False) -> dict[int, int]:
         """Returns a fast pre-computed dictionary of {ventebot_product_id: stock} in 0ms."""
+        if not self.is_configured():
+            return {}
         if not self._stock_map or force_refresh:
             await self.get_products(force_refresh=force_refresh)
         return self._stock_map
@@ -182,3 +187,37 @@ class VenteBotClient:
 
 ventebot_client = VenteBotClient()
 
+
+async def get_effective_product_stock(session, product) -> int:
+    """Unified stock calculator for all product types (Local, VenteBot, LootPaglu, Manual)."""
+    if not product:
+        return 0
+    if not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
+        return 999
+
+    # 1. VenteBot Reseller API product
+    v_id = get_ventebot_target_id(product)
+    if v_id:
+        try:
+            if ventebot_client.is_configured():
+                return await ventebot_client.get_stock(v_id)
+        except Exception as exc:
+            logger.warning(f"Error fetching VenteBot live stock for #{product.id}: {exc}")
+            return 0
+
+    # 2. LootPaglu mapped product
+    try:
+        from app.services.loot_paglu import is_paglu_product, live_stock
+        if is_paglu_product(product.id):
+            return await live_stock(product.id, 0)
+    except Exception:
+        pass
+
+    # 3. Local inventory from database
+    try:
+        from app.db import repo
+        local = await repo.available_stock_count(session, product.id)
+        return max(0, int(local))
+    except Exception as exc:
+        logger.warning(f"Error getting local stock count for #{product.id}: {exc}")
+        return 0

@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 from html import escape
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
@@ -44,34 +44,26 @@ PAYMENT_LABELS = {
 
 
 async def product_available_stock(session, product) -> int:
-    if not product:
-        return 0
-    # If product is connected to VenteBot (via DB link or env variable like Paglu), query live stock
-    from app.services.ventebot import get_ventebot_target_id
-    v_id = get_ventebot_target_id(product)
-    if v_id:
-        try:
-            from app.services.ventebot import ventebot_client
-            if ventebot_client.is_configured():
-                return await ventebot_client.get_stock(v_id)
-        except Exception as exc:
-            logger.warning(f"Error fetching VenteBot live stock for #{product.id}: {exc}")
-    if not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
-        return 999
-    local = await repo.available_stock_count(session, product.id)
-    return await live_stock(product.id, local)
+    from app.services.ventebot import get_effective_product_stock
+    return await get_effective_product_stock(session, product)
 
 
 async def product_stock_map(session, products) -> dict[int, int]:
     result: dict[int, int] = {}
-    from app.services.ventebot import ventebot_client, get_ventebot_target_id
-    vente_stock_map: dict[int, int] = {}
-    if ventebot_client.is_configured():
-        try:
-            vente_stock_map = await ventebot_client.get_all_stock_map()
-        except Exception:
-            pass
+    if not products:
+        return result
 
+    vente_stock_map: dict[int, int] = {}
+    try:
+        from app.services.ventebot import ventebot_client
+        if ventebot_client.is_configured():
+            vente_stock_map = await ventebot_client.get_all_stock_map()
+    except Exception as exc:
+        logger.warning(f"Error fetching VenteBot stock map: {exc}")
+
+    from app.services.ventebot import get_ventebot_target_id
+
+    local_product_ids = []
     for product in products:
         v_id = get_ventebot_target_id(product)
         if v_id:
@@ -79,8 +71,16 @@ async def product_stock_map(session, products) -> dict[int, int]:
         elif not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
             result[product.id] = 999
         else:
-            local = await repo.available_stock_count(session, product.id)
-            result[product.id] = await live_stock(product.id, local)
+            local_product_ids.append(product.id)
+
+    if local_product_ids:
+        try:
+            local_counts = await repo.available_stock_counts(session, local_product_ids)
+        except Exception:
+            local_counts = {}
+        for pid in local_product_ids:
+            local = local_counts.get(pid, 0)
+            result[pid] = await live_stock(pid, local)
     return result
 
 def format_order_time(value) -> str:
@@ -218,27 +218,41 @@ async def products_cmd(message: Message):
 @router.callback_query(F.data.startswith("cat:"))
 async def category_products(call: CallbackQuery):
     await call.answer()
-    category = call.data.split(":", 1)[1]
-    async with SessionLocal() as session:
-        if category == "__all__":
-            products = await repo.list_products(session)
-            title = "🔥 All Products"
-        else:
-            products = await repo.list_products_by_category(session, category)
-            title = f"📂 {category}"
-        stock_counts = await product_stock_map(session, products)
-
     try:
-        await call.message.edit_text(f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
-    except Exception:
-        try:
-            await call.message.delete()
-        except Exception:
-            pass
-        if not products:
-            await call.bot.send_message(call.message.chat.id, "No products in this category yet.")
+        category = call.data.split(":", 1)[1]
+        async with SessionLocal() as session:
+            if category == "__all__":
+                products = await repo.list_products(session)
+                title = "🔥 All Products"
+            else:
+                products = await repo.list_products_by_category(session, category)
+                title = f"📂 {category}"
+            stock_counts = await product_stock_map(session, products)
+
+        if getattr(call.message, "photo", None):
+            try:
+                await call.message.delete()
+            except Exception:
+                pass
+            if not products:
+                await call.bot.send_message(call.message.chat.id, "No products in this category yet.")
+            else:
+                await call.bot.send_message(call.message.chat.id, f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
         else:
-            await call.bot.send_message(call.message.chat.id, f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
+            try:
+                await call.message.edit_text(f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
+            except Exception:
+                try:
+                    await call.message.delete()
+                except Exception:
+                    pass
+                if not products:
+                    await call.bot.send_message(call.message.chat.id, "No products in this category yet.")
+                else:
+                    await call.bot.send_message(call.message.chat.id, f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
+    except Exception as exc:
+        logger.exception(f"Unhandled error in category_products: {exc}")
+        await call.message.answer("⚠️ Could not load products. Please try again.")
 
 
 @router.callback_query(F.data == "reviews")

@@ -69,18 +69,14 @@ def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarku
     if available_stock > 0:
         rows = [
             [InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")],
-            [InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}")],
-            [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
+            [InlineKeyboardButton(text="📂 Back to Categories", callback_data="shop")],
         ]
     else:
         rows = [
             [InlineKeyboardButton(text="❌ Out of Stock", callback_data="outofstock")],
             [InlineKeyboardButton(text="🔔 Notify Me When Restocked", callback_data=f"stocknotify:{product_id}")],
-            [InlineKeyboardButton(text="❤️ Wishlist", callback_data=f"v5:wishlisttoggle:{product_id}")],
-            [InlineKeyboardButton(text="⬅️ Back to Store", callback_data="shop")],
+            [InlineKeyboardButton(text="📂 Back to Categories", callback_data="shop")],
         ]
-    if settings.support_link:
-        rows.insert(-1, [InlineKeyboardButton(text="💬 Ask Support", url=settings.support_link)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

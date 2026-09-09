@@ -1,4 +1,4 @@
-﻿from html import escape
+from html import escape
 from datetime import timezone
 import csv
 import io
