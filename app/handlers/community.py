@@ -42,7 +42,8 @@ async def announce_command(message: Message):
     if not text:
         await message.answer("Usage: /announce Your update message")
         return
-    if not settings.update_chat_ids():
+    targets = settings.update_chat_ids() if callable(settings.update_chat_ids) else settings.update_chat_ids
+    if not targets:
         await message.answer("UPDATE_CHAT_IDS is not configured in Railway.")
         return
     sent, failed = await send_to_update_chats(

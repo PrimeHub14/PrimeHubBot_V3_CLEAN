@@ -2,6 +2,11 @@ from pydantic_settings import BaseSettings
 from pydantic import field_validator
 
 
+class _UpdateChatList(list):
+    def __call__(self) -> list:
+        return self
+
+
 class Settings(BaseSettings):
     BOT_TOKEN: str
     ADMIN_IDS: str = ""
@@ -91,8 +96,8 @@ class Settings(BaseSettings):
         return self.PUBLIC_URL.rstrip("/") + self.WEBHOOK_PATH
 
     @property
-    def update_chat_ids(self) -> list[int | str]:
-        values: list[int | str] = []
+    def update_chat_ids(self) -> _UpdateChatList:
+        values = _UpdateChatList()
         for raw in self.UPDATE_CHAT_IDS.split(","):
             value = raw.strip()
             if not value:

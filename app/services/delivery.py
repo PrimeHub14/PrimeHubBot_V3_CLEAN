@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Order
 from app.config import settings
 from app.services.loot_paglu import LootPagluClient, LootPagluError, is_paglu_product
+from app.services.admin_notifications import notify_admins_new_sale
 from app.db.repo import (
     allocate_stock_items,
     complete_stock_items,
@@ -198,6 +199,10 @@ async def _deliver_paglu_order(bot: Bot, session: AsyncSession, order: Order) ->
 
     order.delivery_record = "\n\n".join(str(x) for x in products[:quantity])
     await mark_delivered(session, order)
+    try:
+        await notify_admins_new_sale(bot, session, order)
+    except Exception:
+        pass
 
 
 async def _deliver_ventebot_order(bot: Bot, session: AsyncSession, order: Order, target_v_id: int | None = None) -> None:
@@ -245,6 +250,10 @@ async def _deliver_ventebot_order(bot: Bot, session: AsyncSession, order: Order,
     order.supplier_order_id = str(v_order.get("id") or "")
     order.supplier_status = str(v_order.get("status") or "COMPLETED")
     await mark_delivered(session, order)
+    try:
+        await notify_admins_new_sale(bot, session, order)
+    except Exception:
+        pass
 
 
 async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
@@ -403,4 +412,8 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
         )
 
     await mark_delivered(session, order)
+    try:
+        await notify_admins_new_sale(bot, session, order)
+    except Exception:
+        pass
 

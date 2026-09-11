@@ -11,6 +11,7 @@ from app.db.session import SessionLocal
 from app.i18n import tr
 from app.keyboards import order_history_kb, categories_kb, main_menu_kb, wallet_home_kb, product_kb
 from app.services.loot_paglu import live_stock
+from app.utils.security import is_admin
 
 router = Router()
 
@@ -200,6 +201,15 @@ async def wallet_command(message: Message, state: FSMContext) -> None:
 @router.message(Command("order", "orders"))
 async def orders_command(message: Message, state: FSMContext) -> None:
     await state.clear()
+    parts = (message.text or "").split()
+    if len(parts) >= 2 and parts[1].isdigit() and message.from_user and is_admin(message.from_user.id):
+        from app.handlers.admin import render_order_card
+        order_id = int(parts[1])
+        async with SessionLocal() as session:
+            text, markup = await render_order_card(session, order_id)
+        await message.answer(text, reply_markup=markup, parse_mode="HTML")
+        return
+
     await _register_user(message)
     async with SessionLocal() as session:
         orders = await repo.user_orders(session, message.from_user.id, limit=20)

@@ -95,32 +95,40 @@ async def admin(message: Message):
     if not admin_only(message):
         return
     await message.answer(
-        "👤 <b>Admin Panel</b>\n\n"
+        "👤 <b>Prime Hub Admin Panel</b>\n\n"
+        "📦 <b>Order & Delivery Management:</b>\n"
+        "/adminorders - Recent orders dashboard\n"
+        "/order ORDER_ID - Inspect order details & customer info\n"
+        "/deliver ORDER_ID - Instant delivery of any order\n"
+        "/delivermanual ORDER_ID [text] - Send custom credentials\n"
+        "/stats - Store sales & user statistics\n"
+        "/reports - Sales reports by date range\n"
+        "/solddata - Exact sold-item ledger & CSV export\n\n"
+        "🛍️ <b>Catalog & Stock:</b>\n"
         "/addproduct - Add product\n"
         "/listproducts - List products\n"
         "/editproduct PRODUCT_ID - Edit product\n"
         "/moveproduct PRODUCT_ID - Move product to category\n"
         "/deletecategory - Remove an empty category\n"
         "/delproduct PRODUCT_ID - Disable product\n"
-        "/adminorders - Recent orders\n"
-        "/stats - Store stats\n"
-        "/reports - Sales reports by date\n"
-        "/solddata - Exact sold-item ledger & CSV exports\n"
         "/addstock PRODUCT_ID - Add unique stock\n"
         "/stock PRODUCT_ID - Check available stock\n"
         "/removestock PRODUCT_ID QTY - Reduce stock\n"
         "/disablestock PRODUCT_ID - Use reusable delivery\n"
         "/editnote PRODUCT_ID - Set customer instructions\n"
-        "/viewnote PRODUCT_ID - View customer instructions\n"
-        "/announce MESSAGE - Post to Prime Hub update chats\n"
+        "/viewnote PRODUCT_ID - View customer instructions\n\n"
+        "📢 <b>Broadcasts & Support:</b>\n"
+        "/postchannel MESSAGE - Post offer/update to Prime Hub channel\n"
+        "/announce MESSAGE - Post to all update chats\n"
+        "/broadcast - Send broadcast to users\n"
+        "/ticketsadmin - Open support tickets\n"
         "/replyticket ID MESSAGE - Reply to a ticket\n\n"
-        "🌐 <b>VenteBot Commands:</b>\n"
+        "🌐 <b>VenteBot Integration:</b>\n"
         "/ventelist [search] - Browse & search VenteBot products\n"
-        "/ventefile - Download full VenteBot catalogue as text file\n"
-        "/venteinfo ID - Detailed info on a VenteBot item\n"
+        "/ventefile - Download full catalogue as .txt file\n"
+        "/venteinfo ID - View item details & supplier stock\n"
         "/ventelink PRIMEHUB_ID VENTE_ID - Connect product\n"
-        "/venteme - Check VenteBot balance & connection\n\n"
-        "Manual payment proofs arrive here with Approve & Deliver / Reject buttons.",
+        "/venteme - Check VenteBot balance & status",
         parse_mode="HTML",
     )
 
@@ -139,9 +147,7 @@ async def approve_payment(call: CallbackQuery):
         if order.delivered or order.status == "delivered":
             await call.answer("This order was already delivered.", show_alert=True)
             return
-        if order.status != "proof_submitted":
-            await call.answer(f"Order status is {order.status}; cannot approve.", show_alert=True)
-            return
+
         await repo.set_order_status(session, order, "approved")
         try:
             await deliver_order(call.bot, session, order)
@@ -167,12 +173,16 @@ async def approve_payment(call: CallbackQuery):
                 await call.answer("Delivery failed. Check the message.", show_alert=True)
             return
 
-    await call.message.edit_reply_markup(reply_markup=None)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
     if getattr(order.product, "delivery_mode", "instant") == "manual":
-        await call.message.answer(f"✅ Order #{order_id} approved. Waiting for manual delivery; use /deliverorder {order_id}.")
+        await call.message.answer(f"✅ Order #{order_id} approved. Waiting for manual delivery; use /delivermanual {order_id}.")
         await call.answer("Approved; manual delivery pending.")
     else:
-        await call.message.answer(f"✅ Order #{order_id} approved and delivered.")
+        await call.message.answer(f"✅ Order #{order_id} approved and delivered successfully to customer!")
         await call.answer("Approved and delivered.")
 
 
@@ -194,14 +204,17 @@ async def reject_payment(call: CallbackQuery):
         try:
             await call.bot.send_message(
                 order.user_id,
-                f"❌ Payment proof for order <code>{order.id}</code> was rejected.\n\n"
-                "Please check the amount/reference and contact support or create a new order.",
+                f"❌ Payment verification for Order #{order.id} could not be confirmed.\n\n"
+                "Please check the amount/reference and contact support via /help or create a new order.",
                 parse_mode="HTML",
             )
         except Exception:
             pass
 
-    await call.message.edit_reply_markup(reply_markup=None)
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     await call.message.answer(f"❌ Order #{order_id} rejected.")
     await call.answer("Rejected.")
 
@@ -632,19 +645,298 @@ async def del_product(message: Message):
     await message.answer("✅ Disabled." if ok else "Product not found.")
 
 
+async def render_order_card(session: AsyncSession, order_id: int) -> tuple[str, InlineKeyboardMarkup | None]:
+    order = await repo.get_order_with_product(session, order_id)
+    if not order:
+        return f"❌ Order #{order_id} not found.", None
+
+    p_name = order.product.name if order.product else f"Product #{order.product_id}"
+    user = order.user
+    customer_name = " ".join(filter(None, [user.first_name, user.last_name])) if user else f"User {order.user_id}"
+    username = f"@{user.username}" if user and user.username else "No username"
+
+    inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+    inr_val = float(order.amount) * inr_rate
+    created_str = order.created_at.strftime("%d %b %Y, %H:%M UTC") if order.created_at else "Unknown"
+
+    status_icon = "✅" if order.delivered else ("⌛" if order.status == "expired" else ("🔍" if order.payment_proof_value else "⏳"))
+
+    lines = [
+        f"🧾 <b>Order #{order.id} Details</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"📦 Product: <b>{escape(p_name)}</b>",
+        f"🔢 Quantity: <b>{order.quantity or 1}</b>",
+        f"💵 Total: <b>${float(order.amount):.2f}</b> (approx ₹{inr_val:,.2f})",
+        f"💳 Method: <b>{escape(order.payment_method or 'Not set')}</b>",
+        f"📊 Status: {status_icon} <b>{escape(order.status)}</b> (Delivered: {'Yes' if order.delivered else 'No'})",
+        f"🕒 Created: <code>{created_str}</code>",
+    ]
+
+    if order.payment_proof_value:
+        lines.append(f"🔢 UTR / Proof: <code>{escape(str(order.payment_proof_value))}</code>")
+    if order.supplier_source:
+        lines.append(f"🌐 Supplier: <b>{escape(order.supplier_source)}</b> (Ref #{order.supplier_order_id})")
+    if order.delivery_record:
+        snippet = str(order.delivery_record)[:120] + "..." if len(str(order.delivery_record)) > 120 else str(order.delivery_record)
+        lines.append(f"🎁 Delivered Content:\n<code>{escape(snippet)}</code>")
+
+    lines.extend([
+        "",
+        f"👤 <b>Customer Details:</b>",
+        f"• Name: <b>{escape(customer_name)}</b>",
+        f"• Username: <b>{escape(username)}</b>",
+        f"• Telegram ID: <code>{order.user_id}</code>",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ])
+
+    buttons = []
+    if not order.delivered:
+        buttons.append([InlineKeyboardButton(text=f"🚀 Deliver Order #{order.id}", callback_data=f"adminapprove:{order.id}")])
+        buttons.append([InlineKeyboardButton(text=f"✍️ Manual Deliver #{order.id}", callback_data=f"manualdeliverprompt:{order.id}")])
+    else:
+        buttons.append([InlineKeyboardButton(text="🔄 Force Re-deliver", callback_data=f"adminforcedeliver:{order.id}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="💬 Message Customer", url=f"tg://user?id={order.user_id}"),
+        InlineKeyboardButton(text="🔙 Back to Orders", callback_data="refreshadminorders"),
+    ])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 @router.message(Command("adminorders"))
 async def orders(message: Message):
     if not admin_only(message):
         return
     async with SessionLocal() as session:
-        orders = await repo.recent_orders(session)
-    if not orders:
+        orders_list = await repo.recent_orders(session, limit=15)
+    if not orders_list:
         await message.answer("No orders yet.")
         return
-    lines = ["🧾 Recent orders:"]
-    for o in orders:
-        lines.append(f"#{o.id} | user {o.user_id} | product {o.product_id} | {o.payment_method} | {o.status} | ${float(o.amount):.2f}")
-    await message.answer("\n".join(lines))
+
+    lines = ["🧾 <b>Recent Orders Dashboard</b>\n"]
+    buttons = []
+    current_row = []
+
+    for o in orders_list:
+        p_name = o.product.name[:22] if o.product else f"Product #{o.product_id}"
+        username = f"@{o.user.username}" if o.user and o.user.username else f"ID:{o.user_id}"
+
+        status_icon = "✅" if o.delivered else ("⌛" if o.status == "expired" else ("🔍" if o.payment_proof_value else "⏳"))
+        utr_str = f" [UTR: {str(o.payment_proof_value)[:12]}]" if o.payment_proof_value else ""
+
+        lines.append(
+            f"{status_icon} <b>#{o.id}</b> · <b>{escape(p_name)}</b>\n"
+            f"   👤 {escape(username)} · <b>${float(o.amount):.2f}</b> · {escape(o.status)}{utr_str}"
+        )
+
+        btn_text = f"{status_icon} #{o.id}"
+        current_row.append(InlineKeyboardButton(text=btn_text, callback_data=f"adminorder:{o.id}"))
+        if len(current_row) == 3:
+            buttons.append(current_row)
+            current_row = []
+
+    if current_row:
+        buttons.append(current_row)
+
+    lines.append("\n<i>Tap any order button below to view details or deliver:</i>")
+    await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "refreshadminorders")
+async def refresh_admin_orders(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        orders_list = await repo.recent_orders(session, limit=15)
+    if not orders_list:
+        await call.answer("No orders yet.", show_alert=True)
+        return
+
+    lines = ["🧾 <b>Recent Orders Dashboard</b>\n"]
+    buttons = []
+    current_row = []
+
+    for o in orders_list:
+        p_name = o.product.name[:22] if o.product else f"Product #{o.product_id}"
+        username = f"@{o.user.username}" if o.user and o.user.username else f"ID:{o.user_id}"
+
+        status_icon = "✅" if o.delivered else ("⌛" if o.status == "expired" else ("🔍" if o.payment_proof_value else "⏳"))
+        utr_str = f" [UTR: {str(o.payment_proof_value)[:12]}]" if o.payment_proof_value else ""
+
+        lines.append(
+            f"{status_icon} <b>#{o.id}</b> · <b>{escape(p_name)}</b>\n"
+            f"   👤 {escape(username)} · <b>${float(o.amount):.2f}</b> · {escape(o.status)}{utr_str}"
+        )
+
+        btn_text = f"{status_icon} #{o.id}"
+        current_row.append(InlineKeyboardButton(text=btn_text, callback_data=f"adminorder:{o.id}"))
+        if len(current_row) == 3:
+            buttons.append(current_row)
+            current_row = []
+
+    if current_row:
+        buttons.append(current_row)
+
+    lines.append("\n<i>Tap any order button below to view details or deliver:</i>")
+    try:
+        await call.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adminorder:"))
+async def admin_order_callback(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    order_id = int(call.data.split(":")[1])
+    async with SessionLocal() as session:
+        text, markup = await render_order_card(session, order_id)
+    await call.message.answer(text, reply_markup=markup, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(Command("adminorder"))
+async def admin_inspect_order_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("ℹ️ <b>Usage:</b> <code>/order ORDER_ID</code>\nExample: <code>/order 193</code>", parse_mode="HTML")
+        return
+    order_id = int(parts[1])
+    async with SessionLocal() as session:
+        text, markup = await render_order_card(session, order_id)
+    await message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+@router.message(Command("deliver"))
+async def admin_instant_deliver_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("ℹ️ <b>Usage:</b> <code>/deliver ORDER_ID</code>\nExample: <code>/deliver 193</code>", parse_mode="HTML")
+        return
+    order_id = int(parts[1])
+
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await message.answer(f"❌ Order #{order_id} not found.")
+            return
+        if order.delivered:
+            await message.answer(f"⚠️ Order #{order_id} was already delivered.")
+            return
+
+        await message.answer(f"⏳ Delivering Order #{order_id} to customer <code>{order.user_id}</code>...")
+        try:
+            await deliver_order(message.bot, session, order)
+            p_name = order.product.name if order.product else f"Product #{order.product_id}"
+            await message.answer(
+                f"✅ <b>Order #{order_id} Delivered Successfully!</b>\n\n"
+                f"📦 Product: <b>{escape(p_name)}</b>\n"
+                f"👤 Customer ID: <code>{order.user_id}</code>\n"
+                f"Product credentials delivered straight to customer's chat.",
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            await message.answer(f"❌ Delivery failed for Order #{order_id}:\n{exc}")
+
+
+@router.message(Command("delivermanual"))
+async def admin_deliver_manual_command(message: Message, state: FSMContext):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("ℹ️ <b>Usage:</b> <code>/delivermanual ORDER_ID [content]</code>\nExample: <code>/delivermanual 193 user:pass</code>", parse_mode="HTML")
+        return
+    order_id = int(parts[1])
+
+    if len(parts) >= 3 and parts[2].strip():
+        content = parts[2].strip()
+        async with SessionLocal() as session:
+            order = await repo.get_order_with_product(session, order_id)
+            if not order:
+                await message.answer(f"❌ Order #{order_id} not found.")
+                return
+            order.delivery_record = content
+            await message.bot.send_message(
+                order.user_id,
+                f"✅ <b>Order #{order.id} Delivered</b>\n\n<code>{escape(content)}</code>\n\nThank you for choosing Prime Hub! 💛",
+                parse_mode="HTML",
+            )
+            await repo.mark_delivered(session, order)
+            try:
+                from app.services.admin_notifications import notify_admins_new_sale
+                await notify_admins_new_sale(message.bot, session, order)
+            except Exception:
+                pass
+        await message.answer(f"✅ <b>Order #{order_id} manually delivered to customer!</b>", parse_mode="HTML")
+    else:
+        await state.set_state(ManualDelivery.content)
+        await state.update_data(manual_order_id=order_id)
+        await message.answer(f"Send the manual delivery content for Order #{order_id} now (text, photo, or document).")
+
+
+@router.callback_query(F.data.startswith("manualdeliverprompt:"))
+async def manual_deliver_prompt_callback(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    order_id = int(call.data.split(":")[1])
+    await state.set_state(ManualDelivery.content)
+    await state.update_data(manual_order_id=order_id)
+    await call.message.answer(f"Send the manual delivery content for Order #{order_id} now (text, photo, or document).")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adminforcedeliver:"))
+async def admin_forcedeliver_callback(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    order_id = int(call.data.split(":")[1])
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await call.answer("Order not found.", show_alert=True)
+            return
+        order.delivered = False
+        try:
+            await deliver_order(call.bot, session, order)
+            await call.message.answer(f"✅ Order #{order_id} re-delivered to customer.")
+            await call.answer("Delivered!")
+        except Exception as exc:
+            await call.message.answer(f"❌ Re-delivery failed: {exc}")
+            await call.answer("Failed", show_alert=True)
+
+
+@router.message(Command("postchannel"))
+async def post_to_channel_command(message: Message):
+    if not admin_only(message):
+        return
+    text = (message.text or "").partition(" ")[2].strip()
+    if not text:
+        await message.answer("ℹ️ <b>Usage:</b> <code>/postchannel Your announcement or offer message</code>", parse_mode="HTML")
+        return
+    targets = settings.update_chat_ids() if callable(settings.update_chat_ids) else settings.update_chat_ids
+    if not targets:
+        await message.answer(
+            "⚠️ No channel is configured yet.\n\n"
+            "To connect your channel:\n"
+            "1. Add this bot as Admin to your Telegram channel.\n"
+            "2. In Railway Variables, set <code>UPDATE_CHAT_IDS=@YourChannelUsername</code> (or channel ID).\n"
+            "3. Redeploy.",
+            parse_mode="HTML",
+        )
+        return
+    from app.services.announcements import send_to_update_chats
+    sent, failed = await send_to_update_chats(message.bot, text)
+    await message.answer(f"📢 Channel broadcast sent to {sent} target(s). Failed: {failed}.")
 
 
 @router.message(Command("stats"))
@@ -831,8 +1123,8 @@ async def deliver_order_command(message: Message, state: FSMContext):
         return
     async with SessionLocal() as session:
         order=await repo.get_order_with_product(session,int(parts[1]))
-        if not order or order.status != "paid_manual":
-            await message.answer("Order not found or not waiting for manual delivery."); return
+        if not order or order.delivered:
+            await message.answer("Order not found or already delivered."); return
     await state.update_data(manual_order_id=int(parts[1]))
     await state.set_state(ManualDelivery.content)
     await message.answer("Send the manual delivery content now (text, photo, or document).")
@@ -844,8 +1136,8 @@ async def send_manual_delivery(message: Message, state: FSMContext):
     data=await state.get_data(); order_id=int(data["manual_order_id"])
     async with SessionLocal() as session:
         order=await repo.get_order_with_product(session,order_id)
-        if not order or order.status != "paid_manual":
-            await message.answer("Order is no longer waiting for manual delivery."); await state.clear(); return
+        if not order or order.delivered:
+            await message.answer("Order is already delivered."); await state.clear(); return
         if message.photo:
             order.delivery_record = f"PHOTO_FILE_ID:{message.photo[-1].file_id}"
             await message.bot.send_photo(order.user_id,message.photo[-1].file_id,caption=f"✅ Manual delivery for order #{order.id}")
@@ -858,6 +1150,11 @@ async def send_manual_delivery(message: Message, state: FSMContext):
         else:
             await message.answer("Send text, photo, or document."); return
         await repo.mark_delivered(session,order)
+        try:
+            from app.services.admin_notifications import notify_admins_new_sale
+            await notify_admins_new_sale(message.bot, session, order)
+        except Exception:
+            pass
     await state.clear(); await message.answer(f"✅ Order #{order_id} manually delivered.")
 
 

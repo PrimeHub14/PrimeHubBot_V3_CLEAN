@@ -244,7 +244,16 @@ async def upi_receive_utr(message: Message, state: FSMContext):
             # If the PhonePe notification arrives on the phone 5-15 seconds later,
             # the webhook will automatically detect this order and auto-deliver!
             order.payment_proof_value = utr
+            order.payment_proof_type = "upi_utr"
+            order.status = "waiting_upi"
             await session.commit()
+
+            from app.services.admin_notifications import notify_admins_upi_submitted
+            try:
+                await notify_admins_upi_submitted(message.bot, session, order, utr, expected_inr, message.from_user)
+            except Exception:
+                pass
+
             await message.answer(
                 f"⏳ <b>UTR Recorded:</b> <code>{utr}</code>\n\n"
                 f"We are checking PhonePe for your payment of <b>₹{expected_inr:,}</b>.\n\n"

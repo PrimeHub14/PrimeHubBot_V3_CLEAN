@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 async def send_to_update_chats(bot: Bot, text: str, reply_markup=None) -> tuple[int, int]:
     sent = 0
     failed = 0
-    for chat_id in settings.update_chat_ids():
+    chat_targets = settings.update_chat_ids() if callable(settings.update_chat_ids) else settings.update_chat_ids
+    for chat_id in chat_targets:
         try:
             await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=reply_markup)
             sent += 1

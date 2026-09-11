@@ -396,6 +396,7 @@ async def expire_unpaid_orders(session: AsyncSession) -> list[Order]:
         Order.expires_at.is_not(None),
         Order.expires_at <= now,
         Order.delivered.is_(False),
+        Order.payment_proof_value.is_(None),
         Order.status.in_(["pending", "awaiting_proof", "waiting_payment", "waiting_trc20", "waiting_bep20", "waiting_binance", "waiting_upi"]),
     ).with_for_update(skip_locked=True)
     orders = list((await session.execute(stmt)).scalars().all())
@@ -483,9 +484,41 @@ async def mark_delivered(session: AsyncSession, order: Order) -> None:
     await session.commit()
 
 
-async def recent_orders(session: AsyncSession, limit: int = 10) -> list[Order]:
-    stmt = select(Order).order_by(Order.id.desc()).limit(limit)
+async def recent_orders(session: AsyncSession, limit: int = 15) -> list[Order]:
+    stmt = (
+        select(Order)
+        .options(selectinload(Order.product), selectinload(Order.user))
+        .order_by(Order.id.desc())
+        .limit(limit)
+    )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def user_all_recent_orders(session: AsyncSession, user_id: int, limit: int = 10) -> list[Order]:
+    """All recent orders for user across any status (pending, waiting_upi, expired, delivered, etc.)."""
+    stmt = (
+        select(Order)
+        .options(selectinload(Order.product), selectinload(Order.user))
+        .where(Order.user_id == user_id)
+        .order_by(Order.id.desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def find_stuck_order_for_user(session: AsyncSession, user_id: int) -> Order | None:
+    """Find the user's most recent order that is stuck, expired, waiting for payment, or waiting for manual delivery."""
+    stmt = (
+        select(Order)
+        .options(selectinload(Order.product), selectinload(Order.user))
+        .where(
+            Order.user_id == user_id,
+            Order.status.in_(["waiting_upi", "pending", "expired", "proof_submitted", "paid_manual", "paid_out_of_stock", "delivery_failed"]),
+        )
+        .order_by(Order.id.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def user_orders(session: AsyncSession, user_id: int, limit: int = 10) -> list[Order]:

@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
+from app.services.delivery import deliver_order
 from app.utils.security import is_admin
 
 router = Router()
@@ -25,6 +26,7 @@ ISSUES = {
 class TicketFlow(StatesGroup):
     details = State()
     admin_reply = State()
+    ticket_manual_content = State()
 
 
 def help_keyboard() -> InlineKeyboardMarkup:
@@ -47,18 +49,15 @@ async def help_command(message: Message, state: FSMContext):
 
 async def recent_orders_keyboard(user_id: int, issue_key: str) -> InlineKeyboardMarkup:
     async with SessionLocal() as session:
-        orders = await repo.user_orders(session, user_id, limit=6)
-        enriched = []
-        for order in orders:
-            full = await repo.get_order_with_product(session, order.id)
-            enriched.append(full)
+        orders = await repo.user_all_recent_orders(session, user_id, limit=6)
     rows = []
-    for order in enriched:
+    for order in orders:
         if not order:
             continue
         name = order.product.name[:25] if order.product else f"Product {order.product_id}"
+        status_icon = "✅" if order.delivered else ("⌛" if order.status == "expired" else "⏳")
         rows.append([InlineKeyboardButton(
-            text=f"#{order.id} · {name} · {order.status}",
+            text=f"{status_icon} #{order.id} · {name} · {order.status}",
             callback_data=f"ticketorder:{issue_key}:{order.id}"
         )])
     rows.append([InlineKeyboardButton(text="📝 No order / General issue", callback_data=f"ticketorder:{issue_key}:none")])
@@ -132,6 +131,16 @@ async def ticket_details(message: Message, state: FSMContext):
 
     async with SessionLocal() as session:
         await repo.upsert_user(session, message.from_user)
+        # If user did not pick an order, check for recent stuck or recent orders
+        if not order_id:
+            stuck = await repo.find_stuck_order_for_user(session, message.from_user.id)
+            if stuck:
+                order_id = stuck.id
+            else:
+                recent_all = await repo.user_all_recent_orders(session, message.from_user.id, limit=1)
+                if recent_all:
+                    order_id = recent_all[0].id
+
         ticket = await repo.create_support_ticket(
             session, user_id=message.from_user.id, issue_type=ISSUES.get(issue_key, "Other Issue"),
             message=details, order_id=order_id, attachment_file_id=attachment,
@@ -149,25 +158,41 @@ async def ticket_details(message: Message, state: FSMContext):
     full_name = " ".join(filter(None, [message.from_user.first_name, message.from_user.last_name])) or "Unknown"
     username = f"@{message.from_user.username}" if message.from_user.username else "Not set"
     order_lines = ""
+    buttons = []
     if order:
-        product_name = order.product.name if order.product else f"Product {order.product_id}"
+        product_name = order.product.name if order.product else f"Product #{order.product_id}"
+        inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+        inr_val = float(order.amount) * inr_rate
+        utr_str = f"\n🔢 UTR / Ref: <code>{escape(str(order.payment_proof_value))}</code>" if order.payment_proof_value else ""
+
+        status_badge = "✅ Delivered" if order.delivered else f"⏳ {order.status}"
         order_lines = (
-            f"\nOrder: <b>#{order.id}</b>\nProduct: <b>{escape(product_name)}</b>\n"
-            f"Status: <b>{escape(order.status)}</b>\nPayment: <b>{escape(order.payment_method or 'Not selected')}</b>\n"
-            f"Amount: <b>${float(order.amount):.2f}</b>\n"
+            f"\n\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"🧾 <b>Attached Order: #{order.id}</b>\n"
+            f"📦 Product: <b>{escape(product_name)}</b>\n"
+            f"🔢 Quantity: <b>{order.quantity or 1}</b>\n"
+            f"💵 Amount: <b>${float(order.amount):.2f}</b> (approx ₹{inr_val:,.2f})\n"
+            f"💳 Payment: <b>{escape(order.payment_method or 'Not selected')}</b>{utr_str}\n"
+            f"📊 Status: <b>{escape(status_badge)}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
         )
+        if not order.delivered:
+            buttons.append([InlineKeyboardButton(text=f"🚀 Deliver Order #{order.id}", callback_data=f"ticketdeliver:{order.id}:{ticket.id}")])
+            buttons.append([InlineKeyboardButton(text=f"✍️ Manual Deliver #{order.id}", callback_data=f"ticketmanual:{order.id}:{ticket.id}")])
+
+    buttons.append([InlineKeyboardButton(text="💬 Reply", callback_data=f"ticketreply:{ticket.id}")])
+    buttons.append([InlineKeyboardButton(text="✅ Mark Resolved", callback_data=f"closeticket:{ticket.id}")])
+    markup = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     admin_text = (
-        f"🎫 <b>New Support Ticket #{ticket.id}</b>\n\n"
-        f"Customer: <b>{escape(full_name)}</b>\nUsername: <b>{escape(username)}</b>\n"
-        f"Telegram ID: <code>{message.from_user.id}</code>\n"
-        f"Issue: <b>{escape(ticket.issue_type)}</b>{order_lines}\n"
-        f"Message:\n{escape(ticket.message)}"
+        f"🎫 <b>Support Ticket #{ticket.id}</b>\n\n"
+        f"👤 Customer: <b>{escape(full_name)}</b>\n"
+        f"📱 Username: <b>{escape(username)}</b>\n"
+        f"🆔 Telegram ID: <code>{message.from_user.id}</code>\n"
+        f"📌 Issue: <b>{escape(ticket.issue_type)}</b>{order_lines}\n\n"
+        f"💬 <b>Customer Message:</b>\n{escape(ticket.message)}"
     )
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Reply", callback_data=f"ticketreply:{ticket.id}")],
-        [InlineKeyboardButton(text="✅ Mark Resolved", callback_data=f"closeticket:{ticket.id}")],
-    ])
+
     for admin_id in settings.admin_ids_set:
         try:
             if message.photo:
@@ -263,11 +288,13 @@ async def ticket_view(call: CallbackQuery):
     if order:
         text += f"Order: <b>#{order.id}</b> · {escape(order.product.name if order.product else str(order.product_id))} · {escape(order.status)}\n"
     text += f"\nIssue: <b>{escape(ticket.issue_type)}</b>\n\n{escape(ticket.message)}"
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Reply", callback_data=f"ticketreply:{ticket.id}")],
-        [InlineKeyboardButton(text="✅ Mark Resolved", callback_data=f"closeticket:{ticket.id}")],
-    ])
-    await call.message.answer(text, reply_markup=markup, parse_mode="HTML")
+    markup_rows = []
+    if order and not order.delivered:
+        markup_rows.append([InlineKeyboardButton(text=f"🚀 Deliver Order #{order.id}", callback_data=f"ticketdeliver:{order.id}:{ticket.id}")])
+        markup_rows.append([InlineKeyboardButton(text=f"✍️ Manual Deliver #{order.id}", callback_data=f"ticketmanual:{order.id}:{ticket.id}")])
+    markup_rows.append([InlineKeyboardButton(text="💬 Reply", callback_data=f"ticketreply:{ticket.id}")])
+    markup_rows.append([InlineKeyboardButton(text="✅ Mark Resolved", callback_data=f"closeticket:{ticket.id}")])
+    await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=markup_rows), parse_mode="HTML")
     await call.answer()
 
 
@@ -302,3 +329,118 @@ async def close_ticket_callback(call: CallbackQuery):
     await call.bot.send_message(ticket.user_id, f"✅ Support ticket #{ticket_id} has been marked resolved.")
     await call.message.edit_reply_markup(reply_markup=None)
     await call.answer("Ticket resolved.")
+
+
+@router.callback_query(F.data.startswith("ticketdeliver:"))
+async def ticket_deliver_callback(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    parts = call.data.split(":")
+    order_id = int(parts[1])
+    ticket_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await call.answer("Order not found.", show_alert=True)
+            return
+        if order.delivered:
+            await call.answer("Order was already delivered!", show_alert=True)
+            return
+
+        try:
+            await deliver_order(call.bot, session, order)
+        except Exception as exc:
+            await call.message.answer(f"❌ Delivery failed for order #{order.id}:\n{exc}")
+            await call.answer("Delivery failed.", show_alert=True)
+            return
+
+        if ticket_id:
+            ticket = await repo.get_support_ticket(session, ticket_id)
+            if ticket:
+                await repo.close_support_ticket(session, ticket)
+                try:
+                    await call.bot.send_message(ticket.user_id, f"✅ Support ticket #{ticket.id} resolved: Order #{order.id} has been delivered!")
+                except Exception:
+                    pass
+
+    await call.message.answer(f"✅ <b>Order #{order_id} delivered successfully!</b> Product sent directly to customer.", parse_mode="HTML")
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await call.answer("Delivered successfully!")
+
+
+@router.callback_query(F.data.startswith("ticketmanual:"))
+async def ticket_manual_callback(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    parts = call.data.split(":")
+    order_id = int(parts[1])
+    ticket_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+    await state.set_state(TicketFlow.ticket_manual_content)
+    await state.update_data(manual_deliver_order_id=order_id, manual_deliver_ticket_id=ticket_id)
+    await call.message.answer(
+        f"✍️ <b>Manual Delivery for Order #{order_id}</b>\n\n"
+        "Send the credentials or instructions now (text, photo, or file) to deliver straight to the customer.",
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@router.message(TicketFlow.ticket_manual_content)
+async def ticket_manual_send(message: Message, state: FSMContext):
+    if not message.from_user or not is_admin(message.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    order_id = data.get("manual_deliver_order_id")
+    ticket_id = data.get("manual_deliver_ticket_id")
+
+    if not order_id:
+        await state.clear()
+        return
+
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, int(order_id))
+        if not order:
+            await message.answer("Order not found.")
+            await state.clear()
+            return
+
+        text = message.text or message.caption or ""
+        if message.photo:
+            order.delivery_record = f"PHOTO_FILE_ID:{message.photo[-1].file_id}"
+            await message.bot.send_photo(order.user_id, message.photo[-1].file_id, caption=f"✅ <b>Order #{order.id} Delivered</b>\n\n{escape(text)}", parse_mode="HTML")
+        elif message.document:
+            order.delivery_record = f"DOCUMENT_FILE_ID:{message.document.file_id}"
+            await message.bot.send_document(order.user_id, message.document.file_id, caption=f"✅ <b>Order #{order.id} Delivered</b>\n\n{escape(text)}", parse_mode="HTML")
+        elif text:
+            order.delivery_record = text
+            await message.bot.send_message(order.user_id, f"✅ <b>Order #{order.id} Delivered</b>\n\n{escape(text)}", parse_mode="HTML")
+        else:
+            await message.answer("Please send text, photo, or document.")
+            return
+
+        await repo.mark_delivered(session, order)
+        try:
+            from app.services.admin_notifications import notify_admins_new_sale
+            await notify_admins_new_sale(message.bot, session, order)
+        except Exception:
+            pass
+
+        if ticket_id:
+            ticket = await repo.get_support_ticket(session, int(ticket_id))
+            if ticket:
+                await repo.close_support_ticket(session, ticket)
+                try:
+                    await message.bot.send_message(ticket.user_id, f"✅ Support ticket #{ticket.id} resolved: Order #{order.id} has been delivered!")
+                except Exception:
+                    pass
+
+    await message.answer(f"✅ <b>Order #{order_id} manual delivery sent to customer!</b>", parse_mode="HTML")
+    await state.clear()
