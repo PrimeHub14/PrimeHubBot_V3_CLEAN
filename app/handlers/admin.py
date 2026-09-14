@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from html import escape
+import re
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -127,10 +128,12 @@ async def admin(message: Message):
         "/ticketsadmin - Open support tickets\n"
         "/replyticket ID MESSAGE - Reply to a ticket\n\n"
         "🌐 <b>VenteBot Integration:</b>\n"
+        "/ventestatus - Overview of all products & live link status\n"
         "/ventelist [search] - Browse & search VenteBot products\n"
         "/ventefile - Download full catalogue as .txt file\n"
         "/venteinfo ID - View item details & supplier stock\n"
         "/ventelink PRIMEHUB_ID VENTE_ID - Connect product\n"
+        "/venteunlink PRIMEHUB_ID - Unlink product\n"
         "/venteme - Check VenteBot balance & status",
         parse_mode="HTML",
     )
@@ -384,20 +387,57 @@ async def list_products(message: Message):
         return
     async with SessionLocal() as session:
         products = await repo.list_products(session, only_active=False)
-        stock_counts = {}
+        vente_stock_map: dict[int, int] = {}
+        try:
+            from app.services.ventebot import ventebot_client
+            if ventebot_client.is_configured():
+                vente_stock_map = await ventebot_client.get_all_stock_map()
+        except Exception:
+            pass
+
+        if not products:
+            await message.answer("No products yet.")
+            return
+
+        lines = ["📦 <b>Prime Hub Products Catalog:</b>\n"]
         for p in products:
-            local = await repo.available_stock_count(session, p.id)
-            stock_counts[p.id] = await live_stock(p.id, local)
-    if not products:
-        await message.answer("No products yet.")
-        return
-    lines = ["📦 Products:"]
-    for p in products:
-        image = "🖼️" if p.image_file_id else "—"
-        stock = f"stock {stock_counts[p.id]}" if p.stock_enabled else "reusable"
-        lines.append(f"#{p.id} | {'✅' if p.active else '❌'} | {image} | {p.category} | {p.name} | ${float(p.price):.2f} | {stock}")
-    lines.append("\nEdit with: /editproduct PRODUCT_ID")
-    await message.answer("\n".join(lines))
+            status = "🟢" if p.active else "🔴"
+            image = "🖼️" if p.image_file_id else "—"
+            if p.ventebot_product_id:
+                v_stock = vente_stock_map.get(int(p.ventebot_product_id), 0)
+                stk_str = f"🟢 Stock: {v_stock}" if v_stock > 0 else "🔴 Stock: 0 (Supplier)"
+                link_info = f"🔗 Vente #{p.ventebot_product_id} ({stk_str})"
+            elif not p.stock_enabled or p.delivery_mode == "manual":
+                link_info = "♾ Reusable / Manual"
+            else:
+                local_stk = await repo.available_stock_count(session, p.id)
+                stk_str = f"🟢 Stock: {local_stk}" if local_stk > 0 else "🔴 OUT OF STOCK"
+                link_info = f"⚠️ Unlinked ({stk_str})"
+
+            lines.append(
+                f"<b>#{p.id}</b> {status} | {image} | <b>{escape(p.name)}</b>\n"
+                f"   📂 {escape(p.category or 'General')} | 💵 ${float(p.price):.2f} | {link_info}"
+            )
+
+        lines.append("\n💡 <b>Helpful Commands:</b>")
+        lines.append("• <code>/ventestatus</code> — Live VenteBot link status & restock check")
+        lines.append("• <code>/ventelink PRIMEHUB_ID VENTE_ID</code> — Link product to supplier")
+        lines.append("• <code>/ventelist &lt;keyword&gt;</code> — Search supplier products")
+        lines.append("• <code>/editproduct PRIMEHUB_ID</code> — Edit price/details")
+
+    full_text = "\n".join(lines)
+    if len(full_text) <= 4000:
+        await message.answer(full_text, parse_mode="HTML")
+    else:
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) + 1 > 3800:
+                await message.answer(chunk, parse_mode="HTML")
+                chunk = line + "\n"
+            else:
+                chunk += line + "\n"
+        if chunk:
+            await message.answer(chunk, parse_mode="HTML")
 
 
 @router.message(Command("moveproduct"))
@@ -1295,6 +1335,145 @@ def format_vente_page(products: list[dict], page: int = 1, page_size: int = 15) 
     ])
 
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+
+def _extract_keywords(text: str) -> set[str]:
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", " ", (text or "").lower())
+    words = cleaned.split()
+    stop_words = {
+        "a", "an", "the", "and", "or", "for", "with", "of", "to", "in", "on", "at",
+        "private", "admin", "access", "premium", "standard", "official", "lifetime",
+        "months", "month", "year", "years", "days", "day", "subscription", "account",
+    }
+    res = set()
+    for w in words:
+        if w not in stop_words and len(w) > 1:
+            res.add(w)
+    return res
+
+
+def suggest_vente_match(prod_name: str, vente_products: list[dict]) -> dict | None:
+    target_kw = _extract_keywords(prod_name)
+    p_lower = prod_name.lower().strip()
+
+    # 1. Exact or substring match first
+    for vp in vente_products:
+        v_name = str(vp.get("name", "")).lower().strip()
+        if p_lower == v_name or p_lower in v_name or v_name in p_lower:
+            return vp
+
+    # 2. Keyword overlap match
+    best_candidate = None
+    best_score = 0
+    for vp in vente_products:
+        v_name = str(vp.get("name", "")).lower()
+        v_kw = _extract_keywords(v_name)
+        shared = target_kw.intersection(v_kw)
+        score = len(shared)
+        if score > best_score and score >= 1:
+            best_score = score
+            best_candidate = vp
+
+    return best_candidate if best_score >= 1 else None
+
+
+@router.message(Command("ventestatus"))
+async def vente_status_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.ventebot import ventebot_client
+    if not ventebot_client.is_configured():
+        await message.answer("⚠️ Set <code>VENTEBOT_API_KEY</code> in Railway first.", parse_mode="HTML")
+        return
+
+    try:
+        vente_products = await ventebot_client.get_products(force_refresh=True)
+    except Exception as exc:
+        await message.answer(f"❌ Could not connect to VenteBot: <code>{exc}</code>", parse_mode="HTML")
+        return
+
+    vente_dict = {int(p["id"]): p for p in vente_products if isinstance(p, dict) and "id" in p}
+
+    async with SessionLocal() as session:
+        products = await repo.list_products(session, only_active=False)
+
+    if not products:
+        await message.answer("No products found in Prime Hub database.")
+        return
+
+    lines = ["📊 <b>Prime Hub ⟷ VenteBot Integration Status</b>\n━━━━━━━━━━━━━━━━━━━━━━"]
+    unlinked = []
+    linked_active = 0
+    linked_out_of_stock = 0
+
+    for p in products:
+        v_id = p.ventebot_product_id
+        if v_id and int(v_id) in vente_dict:
+            vp = vente_dict[int(v_id)]
+            v_name = vp.get("name", "Unknown")
+            v_stock = vp.get("stock")
+            stock_val = 999 if v_stock is None else int(v_stock)
+            stock_str = "Unlimited" if v_stock is None else f"{stock_val} in stock"
+            v_cost = vp.get("reseller_price_usd") or vp.get("price_usd") or 0.0
+
+            if stock_val > 0:
+                linked_active += 1
+                icon = "🟢"
+            else:
+                linked_out_of_stock += 1
+                icon = "🔴"
+
+            lines.append(
+                f"{icon} <b>#{p.id} {escape(p.name)}</b> (${float(p.price):.2f})\n"
+                f"   ↳ Linked to: <code>#{v_id}</code> {escape(str(v_name))}\n"
+                f"   ↳ Supplier Stock: <b>{stock_str}</b> (Wholesale: ${float(v_cost):.2f})\n"
+            )
+        elif v_id:
+            lines.append(
+                f"⚠️ <b>#{p.id} {escape(p.name)}</b> (${float(p.price):.2f})\n"
+                f"   ↳ Linked to: <code>#{v_id}</code> (NOT FOUND in supplier catalog)\n"
+            )
+            unlinked.append(p)
+        else:
+            unlinked.append(p)
+
+    if unlinked:
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━\n⚠️ <b>UNLINKED PRODUCTS (Showing OUT OF STOCK):</b>\n")
+        for up in unlinked:
+            match = suggest_vente_match(up.name, vente_products)
+            lines.append(f"❌ <b>#{up.id} {escape(up.name)}</b> (${float(up.price):.2f})")
+            if match:
+                m_id = match.get("id")
+                m_name = match.get("name")
+                m_stock = match.get("stock")
+                m_cost = match.get("reseller_price_usd") or match.get("price_usd") or 0.0
+                stk_lbl = "Unlimited" if m_stock is None else f"{m_stock} in stock"
+                lines.append(f"   💡 Suggested Match: <code>#{m_id}</code> <b>{escape(str(m_name))}</b> ({stk_lbl} | ${float(m_cost):.2f})")
+                lines.append(f"   👉 Run to link: <code>/ventelink {up.id} {m_id}</code>\n")
+            else:
+                clean_search = re.sub(r"[^a-zA-Z0-9]+", " ", up.name).strip().split()[0] if up.name else "search"
+                lines.append(f"   🔍 Find ID: <code>/ventelist {escape(clean_search)}</code>\n   👉 Run: <code>/ventelink {up.id} VENTE_ID</code>\n")
+
+    lines.append(
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📈 Total: <b>{len(products)}</b> | Linked In-Stock: <b>{linked_active}</b> | "
+        f"Supplier OOS: <b>{linked_out_of_stock}</b> | Unlinked: <b>{len(unlinked)}</b>\n\n"
+        f"🔄 <i>Cache was forcefully refreshed from supplier.</i>"
+    )
+
+    full_text = "\n".join(lines)
+    if len(full_text) <= 4000:
+        await message.answer(full_text, parse_mode="HTML")
+    else:
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) + 1 > 3800:
+                await message.answer(chunk, parse_mode="HTML")
+                chunk = line + "\n"
+            else:
+                chunk += line + "\n"
+        if chunk:
+            await message.answer(chunk, parse_mode="HTML")
 
 
 @router.message(Command("ventelist"))

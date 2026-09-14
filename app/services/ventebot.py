@@ -58,7 +58,7 @@ class VenteBotClient:
     def is_configured(self) -> bool:
         return bool(self.api_key)
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, bypass_etag: bool = False) -> dict[str, str]:
         if not self.api_key:
             raise VenteBotError("VenteBot Reseller API key is not configured. Please set VENTEBOT_API_KEY in Railway.")
         headers = {
@@ -67,15 +67,27 @@ class VenteBotClient:
             "Content-Type": "application/json",
             "User-Agent": "PrimeHubBot/3.0",
         }
-        if self._etag:
+        if self._etag and not bypass_etag:
             headers["If-None-Match"] = self._etag
         return headers
 
-    async def _request(self, method: str, path: str, *, payload: dict[str, Any] | None = None) -> Any:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        bypass_etag: bool = False,
+    ) -> Any:
         url = f"{self.base_url}{path}"
         try:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.request(method, url, headers=self._headers(), json=payload) as response:
+                async with session.request(
+                    method,
+                    url,
+                    headers=self._headers(bypass_etag=bypass_etag),
+                    json=payload,
+                ) as response:
                     if response.status == 304:
                         self._cache_time = time.time()
                         return self._cached_products
@@ -120,7 +132,7 @@ class VenteBotClient:
                 return self._cached_products
 
             try:
-                data = await self._request("GET", "/api/reseller/products")
+                data = await self._request("GET", "/api/reseller/products", bypass_etag=force_refresh)
                 if data is not None and isinstance(data, list):
                     self._cached_products = data
                     self._cache_time = time.time()
@@ -151,13 +163,15 @@ class VenteBotClient:
         """Returns a fast pre-computed dictionary of {ventebot_product_id: stock} in 0ms."""
         if not self.is_configured():
             return {}
-        if not self._stock_map or force_refresh:
+        cache_ttl = getattr(settings, "VENTEBOT_CACHE_SECONDS", 60)
+        now = time.time()
+        if force_refresh or not self._stock_map or (now - self._cache_time) >= cache_ttl:
             await self.get_products(force_refresh=force_refresh)
         return self._stock_map
 
-    async def get_stock(self, ventebot_product_id: int) -> int:
+    async def get_stock(self, ventebot_product_id: int, force_refresh: bool = False) -> int:
         """Get live stock count for a specific VenteBot product."""
-        stock_map = await self.get_all_stock_map()
+        stock_map = await self.get_all_stock_map(force_refresh=force_refresh)
         return stock_map.get(int(ventebot_product_id), 0)
 
     async def create_order(
@@ -188,7 +202,7 @@ class VenteBotClient:
 ventebot_client = VenteBotClient()
 
 
-async def get_effective_product_stock(session, product) -> int:
+async def get_effective_product_stock(session, product, force_refresh: bool = False) -> int:
     """Unified stock calculator for all product types (Local, VenteBot, LootPaglu, Manual)."""
     if not product:
         return 0
@@ -198,7 +212,7 @@ async def get_effective_product_stock(session, product) -> int:
     if v_id:
         try:
             if ventebot_client.is_configured():
-                return await ventebot_client.get_stock(v_id)
+                return await ventebot_client.get_stock(v_id, force_refresh=force_refresh)
         except Exception as exc:
             logger.warning(f"Error fetching VenteBot live stock for #{product.id}: {exc}")
             return 0
