@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from html import escape
 from datetime import timezone
 import csv
@@ -7,12 +9,14 @@ from aiogram import Bot
 from aiogram.types import BufferedInputFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Order
+from app.db import repo
+from app.db.models import Order, Product, ProductItem
 from app.config import settings
 from app.services.loot_paglu import LootPagluClient, LootPagluError, is_paglu_product
 from app.services.admin_notifications import notify_admins_new_sale
 from app.db.repo import (
     allocate_stock_items,
+    available_stock_count,
     complete_stock_items,
     mark_delivered,
     release_stock_items,
