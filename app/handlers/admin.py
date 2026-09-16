@@ -134,7 +134,12 @@ async def admin(message: Message):
         "/venteinfo ID - View item details & supplier stock\n"
         "/ventelink PRIMEHUB_ID VENTE_ID - Connect product\n"
         "/venteunlink PRIMEHUB_ID - Unlink product\n"
-        "/venteme - Check VenteBot balance & status",
+        "/venteme - Check VenteBot balance & status\n\n"
+        "🤖 <b>Paglu Shop Bot Integration:</b>\n"
+        "/paglustatus - Smart Fallback status & stock breakdown\n"
+        "/pagluunlink - Disconnect Paglu bot (use own stock only)\n"
+        "/paglulink [ID] - Connect/re-link Paglu bot\n"
+        "/paglutest - Test Paglu API connectivity",
         parse_mode="HTML",
     )
 
@@ -344,6 +349,115 @@ async def add_is_file(message: Message, state: FSMContext):
 
 
 
+@router.message(Command("paglustatus"))
+async def paglu_status_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.loot_paglu import (
+        is_paglu_enabled,
+        get_paglu_product_id,
+        get_paglu_service_id,
+        LootPagluClient,
+    )
+
+    target_pid = get_paglu_product_id()
+    target_sid = get_paglu_service_id()
+    is_enabled = is_paglu_enabled()
+
+    lines = ["🤖 <b>Paglu Shop Bot Integration Status</b>\n━━━━━━━━━━━━━━━━━━━━━━"]
+    status_icon = "🟢 ACTIVE" if is_enabled else "⚪ UNLINKED / DISABLED"
+    lines.append(f"• <b>Connection Status:</b> {status_icon}")
+    lines.append(f"• <b>Mapped Product ID:</b> <code>#{target_pid}</code>")
+    lines.append(f"• <b>Paglu Service ID:</b> <code>{target_sid}</code>")
+    lines.append("• <b>Mode:</b> 🚀 <b>Smart Fallback</b> (Own Stock First ➔ Paglu Supplier Fallback)\n")
+
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, target_pid) if target_pid else None
+        prod_name = product.name if product else "Unknown"
+        local_stock = await repo.available_stock_count(session, target_pid) if target_pid else 0
+
+    lines.append(f"📦 <b>Target:</b> {escape(prod_name)} (<code>#{target_pid}</code>)")
+    lines.append(f"🏠 <b>Your Own Stock:</b> <b>{local_stock} units</b> <i>(Sold first at 100% pure profit!)</i>")
+
+    supplier_stock = 0
+    wallet_inr = "N/A"
+    api_reachable = False
+    if is_enabled:
+        try:
+            client = LootPagluClient()
+            me = await client.me()
+            service = await client.service(target_sid)
+            wallet_inr = f"₹{me.get('wallet_inr', 0)}"
+            supplier_stock = max(0, int(service.get("available_stock") or 0)) if service else 0
+            api_reachable = True
+        except Exception as exc:
+            lines.append(f"⚠️ <i>Supplier API notice: {escape(str(exc))}</i>")
+
+    if api_reachable:
+        lines.append(f"🌐 <b>Paglu Supplier Stock:</b> <b>{supplier_stock} units</b> <i>(Used automatically when own stock is 0)</i>")
+        lines.append(f"🛒 <b>Total Available to Customers:</b> <b>{local_stock + supplier_stock} units</b>")
+        lines.append(f"💰 <b>Paglu Wallet Balance:</b> <b>{wallet_inr}</b>")
+    else:
+        lines.append(f"🛒 <b>Total Available to Customers:</b> <b>{local_stock} units</b> (Local Only)")
+
+    lines.append("\n━━━━━━━━━━━━━━━━━━━━━━\n💡 <b>Commands:</b>")
+    if is_enabled:
+        lines.append("• <code>/pagluunlink</code> — Disconnect Paglu bot (use ONLY your own stock)")
+    else:
+        lines.append(f"• <code>/paglulink {target_pid or 6}</code> — Re-enable Paglu Smart Fallback")
+    lines.append(f"• <code>/addstock {target_pid or 6}</code> — Add your own accounts/keys")
+    lines.append("• <code>/paglutest</code> — Run full Paglu API test")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("pagluunlink"))
+async def paglu_unlink_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.loot_paglu import set_paglu_enabled, get_paglu_product_id
+    set_paglu_enabled(False)
+    target_pid = get_paglu_product_id()
+    await message.answer(
+        "🔌 <b>Paglu Shop Bot Unlinked!</b>\n\n"
+        "Your bot is now disconnected from Paglu shop bot.\n"
+        f"Product <code>#{target_pid}</code> (Gemini) will now <b>ONLY</b> use your own uploaded stock from <code>/addstock</code>.\n\n"
+        f"💡 <i>To re-link anytime, send: <code>/paglulink {target_pid}</code></i>",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("paglulink"))
+async def paglu_link_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.loot_paglu import (
+        set_paglu_enabled,
+        set_paglu_product_id,
+        set_paglu_service_id,
+        get_paglu_product_id,
+        get_paglu_service_id,
+    )
+    parts = (message.text or "").split()
+    pid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else (get_paglu_product_id() or 6)
+    sid = parts[2].strip() if len(parts) > 2 else (get_paglu_service_id() or "Paglu_1")
+
+    set_paglu_enabled(True)
+    set_paglu_product_id(pid)
+    set_paglu_service_id(sid)
+
+    await message.answer(
+        f"✅ <b>Paglu Shop Bot Linked!</b>\n\n"
+        f"📦 Mapped Product: <code>#{pid}</code>\n"
+        f"🌐 Service ID: <code>{sid}</code>\n"
+        f"⚡ <b>Smart Fallback Mode:</b> <b>ACTIVE</b>\n\n"
+        f"• If you have your own stock in <code>/stock {pid}</code>, customers receive your stock first (100% pure profit!).\n"
+        f"• If your stock runs out (0 units), the bot automatically purchases from Paglu shop bot so you never lose a sale!\n\n"
+        f"💡 <i>Check status anytime with <code>/paglustatus</code></i>",
+        parse_mode="HTML",
+    )
+
+
 @router.message(Command("paglutest"))
 async def paglu_test(message: Message):
     if not admin_only(message):
@@ -411,8 +525,14 @@ async def list_products(message: Message):
                 link_info = "♾ Reusable / Manual"
             else:
                 local_stk = await repo.available_stock_count(session, p.id)
-                stk_str = f"🟢 Stock: {local_stk}" if local_stk > 0 else "🔴 OUT OF STOCK"
-                link_info = f"⚠️ Unlinked ({stk_str})"
+                from app.services.loot_paglu import is_paglu_product, live_stock
+                if is_paglu_product(p.id):
+                    total_stk = await live_stock(p.id, local_stk)
+                    paglu_stk = max(0, total_stk - local_stk)
+                    link_info = f"🤖 Paglu (Own: {local_stk} + Paglu: {paglu_stk} = {total_stk})"
+                else:
+                    stk_str = f"🟢 Stock: {local_stk}" if local_stk > 0 else "🔴 OUT OF STOCK"
+                    link_info = f"⚠️ Unlinked ({stk_str})"
 
             lines.append(
                 f"<b>#{p.id}</b> {status} | {image} | <b>{escape(p.name)}</b>\n"
@@ -420,9 +540,10 @@ async def list_products(message: Message):
             )
 
         lines.append("\n💡 <b>Helpful Commands:</b>")
-        lines.append("• <code>/ventestatus</code> — Live VenteBot link status & restock check")
+        lines.append("• <code>/ventestatus</code> — Live VenteBot link status")
+        lines.append("• <code>/paglustatus</code> — Paglu Smart Fallback status")
+        lines.append("• <code>/pagluunlink</code> — Disconnect Paglu bot")
         lines.append("• <code>/ventelink PRIMEHUB_ID VENTE_ID</code> — Link product to supplier")
-        lines.append("• <code>/ventelist &lt;keyword&gt;</code> — Search supplier products")
         lines.append("• <code>/editproduct PRIMEHUB_ID</code> — Edit price/details")
 
     full_text = "\n".join(lines)

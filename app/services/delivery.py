@@ -256,6 +256,81 @@ async def _deliver_ventebot_order(bot: Bot, session: AsyncSession, order: Order,
         pass
 
 
+async def _send_stock_items(bot: Bot, session: AsyncSession, order: Order, product: Product, items: list[ProductItem]) -> None:
+    text_items: list[tuple[int, str]] = []
+    for index, item in enumerate(items, start=1):
+        if item.is_file_id:
+            await bot.send_document(
+                order.user_id,
+                item.content,
+                caption=(
+                    f"✅ Order Delivered\n"
+                    f"Order ID: #{order.id}\n"
+                    f"Product: {product.name}\n"
+                    f"Item: {index} of {len(items)}\n"
+                    f"Date & Time: {delivery_timestamp(order)}"
+                ),
+            )
+        else:
+            text_items.append((index, item.content))
+
+    if text_items and len(text_items) >= 5:
+        await bot.send_message(
+            order.user_id,
+            (
+                delivery_header(order)
+                + "\n\n📁 <b>Bulk delivery ready</b>\n"
+                + f"Your {len(text_items)} text delivery item(s) are attached below as "
+                + "<b>TXT</b> and <b>CSV</b> files so you can download and save them easily."
+                + note_block(order)
+                + "\n\n━━━━━━━━━━━━━━\n"
+                + "💛 Thank you for choosing Prime Hub."
+            ),
+            parse_mode="HTML",
+        )
+        await bot.send_document(
+            order.user_id,
+            make_bulk_txt(order, text_items),
+            caption=f"📄 TXT delivery file — Order #{order.id}",
+        )
+        await bot.send_document(
+            order.user_id,
+            make_bulk_csv(order, text_items),
+            caption=f"📊 CSV delivery file — Order #{order.id}",
+        )
+    elif text_items:
+        rendered_items = [
+            (
+                f"🎁 <b>Item {index} of {len(items)}</b>\n"
+                f"┌────────────────\n"
+                f"<code>{escape(content)}</code>\n"
+                f"└────────────────"
+            )
+            for index, content in text_items
+        ]
+        await bot.send_message(
+            order.user_id,
+            (
+                delivery_header(order)
+                + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+                + "\n\n".join(rendered_items)
+                + note_block(order)
+                + "\n\n━━━━━━━━━━━━━━\n"
+                + "💛 Thank you for choosing Prime Hub.\n"
+                + "🛟 Need help? Open /help and select this order."
+            ),
+            parse_mode="HTML",
+        )
+    if not text_items and render_delivery_note(order):
+        await bot.send_message(
+            order.user_id,
+            f"📘 <b>Important instructions</b>\n{render_delivery_note(order)}",
+            parse_mode="HTML",
+        )
+    await complete_stock_items(session, order.id)
+    order.delivery_record = "\n\n".join(item.content for item in items if not item.is_file_id)
+
+
 async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
     if order.delivered:
         return
@@ -269,6 +344,26 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
         return
 
     if is_paglu_product(product.id):
+        quantity = max(1, int(order.quantity or 1))
+        # 1. SMART FALLBACK: If we have our own local stock, sell our own stock first! (100% pure profit)
+        local_available = await repo.available_stock_count(session, product.id)
+        if local_available >= quantity:
+            items = await allocate_stock_items(session, order)
+            if len(items) == quantity:
+                try:
+                    await _send_stock_items(bot, session, order, product, items)
+                    order.supplier_source = "local_stock"
+                    await mark_delivered(session, order)
+                    try:
+                        await notify_admins_new_sale(bot, session, order)
+                    except Exception:
+                        pass
+                    return
+                except Exception:
+                    await release_stock_items(session, order.id)
+                    raise
+
+        # 2. If own stock is 0 or exhausted, automatically purchase from Paglu shop bot!
         await _deliver_paglu_order(bot, session, order)
         return
 
@@ -305,77 +400,8 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
         if len(items) != max(1, order.quantity or 1):
             raise RuntimeError("Not enough stock is available for this order. Add stock before retrying delivery.")
         try:
-            text_items: list[tuple[int, str]] = []
-            for index, item in enumerate(items, start=1):
-                if item.is_file_id:
-                    await bot.send_document(
-                        order.user_id,
-                        item.content,
-                        caption=(
-                            f"✅ Order Delivered\n"
-                            f"Order ID: #{order.id}\n"
-                            f"Product: {product.name}\n"
-                            f"Item: {index} of {len(items)}\n"
-                            f"Date & Time: {delivery_timestamp(order)}"
-                        ),
-                    )
-                else:
-                    text_items.append((index, item.content))
-
-            if text_items and len(text_items) >= 5:
-                await bot.send_message(
-                    order.user_id,
-                    (
-                        delivery_header(order)
-                        + "\n\n📁 <b>Bulk delivery ready</b>\n"
-                        + f"Your {len(text_items)} text delivery item(s) are attached below as "
-                          "<b>TXT</b> and <b>CSV</b> files so you can download and save them easily."
-                        + note_block(order)
-                        + "\n\n━━━━━━━━━━━━━━\n"
-                        + "💛 Thank you for choosing Prime Hub."
-                    ),
-                    parse_mode="HTML",
-                )
-                await bot.send_document(
-                    order.user_id,
-                    make_bulk_txt(order, text_items),
-                    caption=f"📄 TXT delivery file — Order #{order.id}",
-                )
-                await bot.send_document(
-                    order.user_id,
-                    make_bulk_csv(order, text_items),
-                    caption=f"📊 CSV delivery file — Order #{order.id}",
-                )
-            elif text_items:
-                rendered_items = [
-                    (
-                        f"🎁 <b>Item {index} of {len(items)}</b>\n"
-                        f"┌────────────────\n"
-                        f"<code>{escape(content)}</code>\n"
-                        f"└────────────────"
-                    )
-                    for index, content in text_items
-                ]
-                await bot.send_message(
-                    order.user_id,
-                    (
-                        delivery_header(order)
-                        + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
-                        + "\n\n".join(rendered_items)
-                        + note_block(order)
-                        + "\n\n━━━━━━━━━━━━━━\n"
-                        + "💛 Thank you for choosing Prime Hub.\n"
-                        + "🛟 Need help? Open /help and select this order."
-                    ),
-                    parse_mode="HTML",
-                )
-            if not text_items and render_delivery_note(order):
-                await bot.send_message(
-                    order.user_id,
-                    f"📘 <b>Important instructions</b>\n{render_delivery_note(order)}",
-                    parse_mode="HTML",
-                )
-            await complete_stock_items(session, order.id)
+            await _send_stock_items(bot, session, order, product, items)
+            order.supplier_source = "local_stock"
         except Exception:
             await release_stock_items(session, order.id)
             raise

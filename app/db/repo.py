@@ -294,11 +294,8 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
     order. Inventory is still never reserved at checkout.
     """
     quantity = max(1, int(quantity))
-    is_supplier_product = bool(
-        settings.LOOTPAGLU_API_KEY
-        and settings.LOOTPAGLU_PRODUCT_ID > 0
-        and int(product.id) == int(settings.LOOTPAGLU_PRODUCT_ID)
-    )
+    from app.services.loot_paglu import is_paglu_product
+    is_supplier_product = is_paglu_product(product.id)
     is_ventebot_product = bool(
         getattr(product, "ventebot_product_id", None)
         or (

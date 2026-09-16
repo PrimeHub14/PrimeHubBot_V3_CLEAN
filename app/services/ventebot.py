@@ -221,7 +221,9 @@ async def get_effective_product_stock(session, product, force_refresh: bool = Fa
     try:
         from app.services.loot_paglu import is_paglu_product, live_stock
         if is_paglu_product(product.id):
-            return await live_stock(product.id, 0)
+            from app.db import repo
+            local = await repo.available_stock_count(session, product.id)
+            return await live_stock(product.id, local)
     except Exception:
         pass
 

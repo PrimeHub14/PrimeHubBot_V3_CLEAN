@@ -11,12 +11,50 @@ class LootPagluError(RuntimeError):
     pass
 
 
+_paglu_enabled: bool = True
+_paglu_override_product_id: int | None = None
+_paglu_override_service_id: str | None = None
+
+
+def is_paglu_enabled() -> bool:
+    global _paglu_enabled
+    return _paglu_enabled and bool(settings.LOOTPAGLU_API_KEY)
+
+
+def set_paglu_enabled(enabled: bool) -> None:
+    global _paglu_enabled
+    _paglu_enabled = bool(enabled)
+
+
+def get_paglu_product_id() -> int:
+    global _paglu_override_product_id
+    if _paglu_override_product_id is not None:
+        return _paglu_override_product_id
+    return int(settings.LOOTPAGLU_PRODUCT_ID or 0)
+
+
+def set_paglu_product_id(product_id: int | None) -> None:
+    global _paglu_override_product_id
+    _paglu_override_product_id = product_id
+
+
+def get_paglu_service_id() -> str:
+    global _paglu_override_service_id
+    if _paglu_override_service_id is not None:
+        return _paglu_override_service_id
+    return str(settings.LOOTPAGLU_SERVICE_ID or "Paglu_1")
+
+
+def set_paglu_service_id(service_id: str | None) -> None:
+    global _paglu_override_service_id
+    _paglu_override_service_id = service_id
+
+
 def is_paglu_product(product_id: int) -> bool:
-    return bool(
-        settings.LOOTPAGLU_API_KEY
-        and settings.LOOTPAGLU_PRODUCT_ID > 0
-        and int(product_id) == int(settings.LOOTPAGLU_PRODUCT_ID)
-    )
+    if not is_paglu_enabled():
+        return False
+    target = get_paglu_product_id()
+    return bool(target > 0 and int(product_id) == int(target))
 
 
 class LootPagluClient:
@@ -70,14 +108,14 @@ class LootPagluClient:
             return []
 
     async def service(self, service_id: str | None = None) -> dict[str, Any] | None:
-        wanted = (service_id or settings.LOOTPAGLU_SERVICE_ID).strip()
+        wanted = (service_id or get_paglu_service_id()).strip()
         for service in await self.products():
             if isinstance(service, dict) and str(service.get("service_id")) == wanted:
                 return service
         return None
 
     async def stock(self, service_id: str | None = None) -> int:
-        service = await self.service(service_id)
+        service = await self.service(service_id or get_paglu_service_id())
         if not service or not isinstance(service, dict):
             return 0
         try:
@@ -88,7 +126,7 @@ class LootPagluClient:
     async def order(self, quantity: int, service_id: str | None = None) -> dict[str, Any]:
         quantity = max(1, int(quantity))
         payload = {
-            "service_id": (service_id or settings.LOOTPAGLU_SERVICE_ID).strip(),
+            "service_id": (service_id or get_paglu_service_id()).strip(),
             "quantity": quantity,
             "currency": settings.LOOTPAGLU_CURRENCY.strip().lower() or "inr",
         }
@@ -102,12 +140,14 @@ class LootPagluClient:
 
 
 async def live_stock(product_id: int, local_stock: int | None = None) -> int:
-    """Return supplier stock for the mapped Gemini product; local stock for everything else."""
+    """Return combined stock: own local stock + Paglu supplier stock when linked."""
+    local = max(0, int(local_stock or 0))
     if not is_paglu_product(product_id):
-        return max(0, int(local_stock or 0))
+        return local
     try:
-        return await LootPagluClient().stock()
+        supplier = await LootPagluClient().stock(get_paglu_service_id())
+        return local + supplier
     except Exception as exc:
         logging.warning(f"Failed to fetch live stock for product {product_id}: {exc}")
-        # Fail closed: never sell API stock when the supplier cannot be checked.
-        return 0
+        # Fail gracefully to local stock if supplier API is down
+        return local
