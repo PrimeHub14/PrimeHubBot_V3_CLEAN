@@ -10,7 +10,7 @@ from aiogram.types import BufferedInputFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repo
-from app.db.models import Order, Product, ProductItem
+from app.db.models import Order, Product, StockItem
 from app.config import settings
 from app.services.loot_paglu import LootPagluClient, LootPagluError, is_paglu_product
 from app.services.admin_notifications import notify_admins_new_sale
@@ -260,7 +260,7 @@ async def _deliver_ventebot_order(bot: Bot, session: AsyncSession, order: Order,
         pass
 
 
-async def _send_stock_items(bot: Bot, session: AsyncSession, order: Order, product: Product, items: list[ProductItem]) -> None:
+async def _send_stock_items(bot: Bot, session: AsyncSession, order: Order, product: Product, items: list[StockItem]) -> None:
     text_items: list[tuple[int, str]] = []
     for index, item in enumerate(items, start=1):
         if item.is_file_id:
