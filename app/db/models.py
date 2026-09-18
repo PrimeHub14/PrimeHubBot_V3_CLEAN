@@ -20,6 +20,9 @@ class User(Base):
     loyalty_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     vip_tier: Mapped[str] = mapped_column(String(20), default="Bronze", nullable=False)
     active_coupon_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_meta_lead_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    meta_followup_step: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -85,6 +88,7 @@ class Order(Base):
     supplier_order_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     supplier_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     supplier_delivery_record: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship()

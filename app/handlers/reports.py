@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import func, select
 
 from app.db.models import Order, Product, User
+from app.db import repo
 from app.db.session import SessionLocal
 from app.utils.security import is_admin
 
@@ -43,6 +44,7 @@ def report_menu() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🏆 Product Performance", callback_data="report:products"),
                 InlineKeyboardButton(text="👥 Customer Performance", callback_data="report:customers"),
             ],
+            [InlineKeyboardButton(text="🎯 Meta Ads Funnel", callback_data="report:meta")],
             [InlineKeyboardButton(text="🏠 Close", callback_data="report:close")],
         ]
     )
@@ -328,3 +330,29 @@ async def custom_report_dates(message: Message, state: FSMContext):
         parse_mode="HTML",
     )
     await state.clear()
+
+
+@router.callback_query(F.data == "report:meta")
+async def report_meta_ads(call: CallbackQuery):
+    if not call.from_user or not is_admin(call.from_user.id):
+        await call.answer("Unauthorized", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        stats = await repo.get_meta_funnel_stats(session)
+
+    text = (
+        "🎯 <b>Meta Ads Funnel Analytics</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 Total Leads Landed: <b>{stats['total_leads']}</b>\n"
+        f"💳 Completed Purchases: <b>{stats['paid_orders']}</b>\n"
+        f"📈 Conversion Rate: <b>{stats['conversion_rate']:.1f}%</b>\n"
+        f"💵 Attributed Revenue: <b>${stats['revenue']:.2f}</b>\n\n"
+        "⚡ <b>Active Bridge Page URL:</b>\n"
+        "<code>https://YOUR-RAILWAY-URL.up.railway.app/gemini18</code>\n\n"
+        "💡 <i>To track separate Facebook vs Instagram ad sets, use:</i>\n"
+        "• <code>/gemini18?utm_source=fb&utm_campaign=stories</code>\n"
+        "• <code>/gemini18?utm_source=ig&utm_campaign=feed</code>"
+    )
+    await call.message.answer(text, reply_markup=report_menu(), parse_mode="HTML")
+    await call.answer()
+

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     ADMIN_IDS: str = ""
     DATABASE_URL: str
-    PUBLIC_URL: str = ""
+    PUBLIC_URL: str = "https://primehubbotv3clean-production.up.railway.app"
     WEBHOOK_PATH: str = "/nowpayments-webhook"
     NOWPAYMENTS_API_KEY: str = ""
     NOWPAYMENTS_IPN_SECRET: str = ""
@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     SUPPORT_USERNAME: str = ""
     REVIEWS_TEXT: str = "⭐ 4.9/5 Customer Rating\n✅ Instant delivery\n🛡 Friendly replacement support\n💬 Fast support"
     WELCOME_IMAGE_FILE_ID: str = ""
+    META_PIXEL_ID: str = "2035067993878515"
+    TELEGRAM_BOT_USERNAME: str = "PrimeHubUs_Bot"
 
     # Loot Paglu supplier integration (only the mapped Prime Hub product uses this)
     LOOTPAGLU_API_KEY: str = ""

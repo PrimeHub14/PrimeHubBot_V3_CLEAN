@@ -81,6 +81,26 @@ def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def meta_gemini_landing_kb(product_id: int, price: float, available_stock: int = 0) -> InlineKeyboardMarkup:
+    if available_stock > 0:
+        rows = [
+            [InlineKeyboardButton(text=f"⚡ Buy 18 Months Now — ${price:.2f}", callback_data=f"paymenu:{product_id}:1")],
+            [
+                InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1"),
+                InlineKeyboardButton(text="💬 Live Support", callback_data="help:home"),
+            ],
+            [InlineKeyboardButton(text="🛍 Browse All Products", callback_data="shop")],
+        ]
+    else:
+        rows = [
+            [InlineKeyboardButton(text="🔔 Notify Me on Restock", callback_data=f"stocknotify:{product_id}")],
+            [InlineKeyboardButton(text="💬 Pre-order with Support", callback_data="help:home")],
+            [InlineKeyboardButton(text="🛍 Browse All Products", callback_data="shop")],
+        ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+
 def quantity_kb(product_id: int, quantity: int) -> InlineKeyboardMarkup:
     quantity = max(1, int(quantity))
     return InlineKeyboardMarkup(inline_keyboard=[

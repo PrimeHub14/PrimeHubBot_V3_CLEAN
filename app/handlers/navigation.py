@@ -9,7 +9,7 @@ from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.i18n import tr
-from app.keyboards import order_history_kb, categories_kb, main_menu_kb, wallet_home_kb, product_kb
+from app.keyboards import order_history_kb, categories_kb, main_menu_kb, wallet_home_kb, product_kb, meta_gemini_landing_kb
 from app.services.loot_paglu import live_stock
 from app.utils.security import is_admin
 
@@ -29,14 +29,16 @@ def _welcome_text(first_name: str | None = None) -> str:
     )
 
 
-async def _register_user(message: Message) -> None:
+async def _register_user(message: Message, source: str | None = None) -> None:
     if not message.from_user:
         return
     async with SessionLocal() as session:
-        await repo.upsert_user(session, message.from_user)
+        await repo.upsert_user(session, message.from_user, source=source)
         text = message.text or ''
         if text.startswith('/start ref_'):
             await repo.set_referrer_from_code(session, message.from_user.id, text.split('ref_', 1)[1].strip())
+        elif source and ("meta" in source.lower() or "gemini" in source.lower()):
+            await repo.record_meta_lead(session, message.from_user.id, source)
 
 
 async def _show_home(message: Message, state: FSMContext) -> None:
@@ -75,9 +77,18 @@ async def start_command(message: Message, state: FSMContext) -> None:
     text = message.text or ""
     payload = text.split(maxsplit=1)[1].strip().lower() if len(text.split(maxsplit=1)) > 1 else ""
 
-    if payload == "gemini18":
+    is_meta_gemini = bool(
+        payload
+        and (
+            payload.startswith("gemini")
+            or payload.startswith("meta")
+            or "gemini" in payload
+        )
+    )
+
+    if is_meta_gemini:
         await state.clear()
-        await _register_user(message)
+        await _register_user(message, source=payload)
 
         async with SessionLocal() as session:
             products = await repo.search_products(session, "Gemini", limit=20)
@@ -86,35 +97,51 @@ async def start_command(message: Message, state: FSMContext) -> None:
                 (
                     p for p in products
                     if "gemini" in p.name.lower()
-                    and ("18 month" in p.name.lower() or "18-month" in p.name.lower())
+                    and ("18 month" in p.name.lower() or "18-month" in p.name.lower() or "18m" in p.name.lower())
                 ),
                 None,
             )
+            if not product and products:
+                product = products[0]
 
             if product:
                 local_stock = await repo.available_stock_count(session, product.id)
                 available_stock = await live_stock(product.id, local_stock)
 
         if product:
-            safe_name = escape(product.name or "")
-            safe_cat = escape(product.category or "")
-            safe_desc = escape(product.description or "")
+            safe_name = escape(product.name or "Gemini AI Pro 18 Months")
+            safe_cat = escape(product.category or "AI Tools")
+            first_name = message.from_user.first_name if message.from_user else "friend"
+            price_val = float(product.price)
+
             caption = (
-                f"🔥 <b>{safe_name}</b>\n\n"
-                f"📂 Category: <b>{safe_cat}</b>\n"
-                f"⚡ Delivery: <b>Instant after confirmation</b>\n"
-                f"🛡️ Support: <b>Available</b>\n"
-                f"📦 Sold: <b>{product.sold_count or 0}</b>\n\n"
-                f"{safe_desc}\n\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"💵 Price: <b>${float(product.price):.2f}</b>\n"
-                f"📦 Available stock: <b>{available_stock}</b>"
+                f"🎁 <b>GEMINI AI PRO + 5TB + ANTIGRAVITY — 18 Months</b>\n"
+                f"<i>⚡ Single-Click Activation On Your Own Email</i>\n\n"
+                f"Welcome, <b>{escape(first_name)}</b>! Your exclusive Meta deal is unlocked:\n"
+                f"Original: <s>₹35,999</s> • Regular: <s>₹799</s>\n"
+                f"🔥 <b>TODAY'S SPECIAL: JUST ₹199 ONLY!</b>\n\n"
+                f"📦 <b>Your 18-Month Package Includes:</b>\n"
+                f"• <b>5TB Storage</b> (Google Drive + Gmail + Photos)\n"
+                f"• <b>Gemini Advanced AI</b> & Deep Reasoning\n"
+                f"• <b>Nano Banana Pro & Veo 3</b>\n"
+                f"• <b>Google Flow & Whisk</b> (1,000 credits/mo)\n"
+                f"• <b>Antigravity Access & NotebookLM</b>\n"
+                f"• <b>Gemini Code Assist & CLI</b>\n"
+                f"• <b>Add Up to 5 Family Members</b>\n"
+                f"• <b>🛡️ 1-Month Replacement Warranty</b>\n\n"
+                f"⚡ <b>How It Works:</b>\n"
+                f"Receive Redeem Link → Open in Chrome → Select your own Google account → Click Activate Plan!\n\n"
+                f"━━━━━━━━━━━━━━━━━━━\n"
+                f"💵 Price: <b>₹199 (${price_val:.2f})</b>\n"
+                f"📦 Available Redeem Codes: <b>{available_stock} slots</b>"
             )
 
             if available_stock <= 0:
-                caption += "\n❌ <b>Currently out of stock — purchasing is disabled</b>"
+                caption += "\n\n⚠️ <i>Current redeem batch is temporarily sold out due to high Meta ad demand. Click below to pre-order or contact support!</i>"
+            else:
+                caption += "\n\n👇 <i>Tap below to pay instantly via UPI, Binance, USDT or Wallet:</i>"
 
-            kb = product_kb(product.id, available_stock)
+            kb = meta_gemini_landing_kb(product.id, price_val, available_stock)
             sent = False
             if product.image_file_id:
                 try:
@@ -147,14 +174,10 @@ async def start_command(message: Message, state: FSMContext) -> None:
                     logging.warning(f"Failed to send HTML navigation message for #{product.id} ({exc}), falling back to plain text.")
                     plain_caption = (
                         f"🔥 {product.name}\n\n"
-                        f"📂 Category: {product.category}\n"
-                        f"⚡ Delivery: Instant after confirmation\n"
-                        f"🛡️ Support: Available\n"
-                        f"📦 Sold: {product.sold_count or 0}\n\n"
-                        f"{product.description}\n\n"
-                        f"━━━━━━━━━━━━━━\n"
-                        f"💵 Price: ${float(product.price):.2f}\n"
-                        f"📦 Available stock: {available_stock}"
+                        f"Promo Price: ${price_val:.2f}\n"
+                        f"Available Slots: {available_stock}\n\n"
+                        "Delivery: Instant after confirmation\n"
+                        "Support: 24/7 Available"
                     )
                     await message.answer(plain_caption, reply_markup=kb)
             return

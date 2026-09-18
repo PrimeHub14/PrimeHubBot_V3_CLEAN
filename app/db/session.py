@@ -19,6 +19,9 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS loyalty_points INTEGER DEFAULT 0 NOT NULL"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS vip_tier VARCHAR(20) DEFAULT 'Bronze' NOT NULL"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS active_coupon_code VARCHAR(50)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(100)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_meta_lead_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS meta_followup_step INTEGER DEFAULT 0"))
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_referral_code ON users (referral_code) WHERE referral_code IS NOT NULL"))
 
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR(255) DEFAULT 'Digital Products'"))
@@ -52,6 +55,7 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS supplier_order_id VARCHAR(255)"))
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS supplier_status VARCHAR(50)"))
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS supplier_delivery_record TEXT"))
+        await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS source VARCHAR(100)"))
         await conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_subscription_user_product "
             "ON stock_subscriptions (user_id, product_id)"

@@ -32,6 +32,7 @@ from app.services.tron_monitor import monitor_loop as tron_monitor_loop
 from app.services.bsc_monitor import monitor_loop as bsc_monitor_loop
 from app.services.binance_monitor import monitor_loop as binance_monitor_loop
 from app.handlers.enterprise import scheduled_broadcast_worker
+from app.services.meta_lead_recovery import meta_lead_recovery_worker
 
 logging.basicConfig(level=logging.INFO)
 
@@ -82,6 +83,7 @@ async def start_bot() -> None:
     bep20_task = asyncio.create_task(bsc_monitor_loop(bot))
     binance_task = asyncio.create_task(binance_monitor_loop(bot))
     broadcast_task = asyncio.create_task(scheduled_broadcast_worker(bot))
+    meta_recovery_task = asyncio.create_task(meta_lead_recovery_worker(bot))
 
     try:
         await dp.start_polling(bot)
@@ -91,12 +93,14 @@ async def start_bot() -> None:
         bep20_task.cancel()
         binance_task.cancel()
         broadcast_task.cancel()
+        meta_recovery_task.cancel()
         await asyncio.gather(
             expiry_task,
             trc20_task,
             bep20_task,
             binance_task,
             broadcast_task,
+            meta_recovery_task,
             return_exceptions=True,
         )
 

@@ -14,14 +14,28 @@ from app.db.models import Order, Product, StockItem, User, SupportTicket, StockS
 MANUAL_METHODS = {"wallet", "binance", "upi"}
 
 
-async def upsert_user(session: AsyncSession, tg_user) -> User:
+async def upsert_user(session: AsyncSession, tg_user, source: str | None = None) -> User:
     user = await session.get(User, tg_user.id)
+    now = datetime.now(timezone.utc)
     if not user:
-        user = User(id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name)
+        is_meta = bool(source and ("meta" in source.lower() or "gemini" in source.lower()))
+        user = User(
+            id=tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+            source=source,
+            last_meta_lead_at=now if is_meta else None,
+            meta_followup_step=0,
+        )
         session.add(user)
     else:
         user.username = tg_user.username
         user.first_name = tg_user.first_name
+        if source:
+            if not user.source:
+                user.source = source
+            if "meta" in source.lower() or "gemini" in source.lower():
+                user.last_meta_lead_at = now
     await session.commit()
     return user
 
@@ -1108,5 +1122,76 @@ async def claim_upi_payment(
     order.provider_payment_id = f"upi:{payment.utr}"
     order.expires_at = None
     await session.commit()
+
+
+async def record_meta_lead(session: AsyncSession, user_id: int, source_code: str) -> None:
+    user = await session.get(User, user_id)
+    if user:
+        if not user.source:
+            user.source = source_code
+        user.last_meta_lead_at = datetime.now(timezone.utc)
+        await session.commit()
+
+
+async def get_pending_meta_leads_for_followup(
+    session: AsyncSession,
+    step: int,
+    cutoff_time: datetime,
+) -> list[User]:
+    """Find leads acquired via Meta or Gemini campaigns eligible for automated re-engagement."""
+    paid_user_ids_subq = (
+        select(Order.user_id)
+        .where(or_(Order.status.in_(["paid", "finished", "confirmed", "sending"]), Order.delivered.is_(True)))
+        .distinct()
+    )
+
+    stmt = (
+        select(User)
+        .where(
+            User.meta_followup_step == step,
+            User.last_meta_lead_at <= cutoff_time,
+            User.source.isnot(None),
+            or_(User.source.ilike("%meta%"), User.source.ilike("%gemini%")),
+            User.id.not_in(paid_user_ids_subq),
+        )
+        .limit(50)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def mark_meta_followup_step(session: AsyncSession, user_id: int, new_step: int) -> None:
+    user = await session.get(User, user_id)
+    if user:
+        user.meta_followup_step = new_step
+        await session.commit()
+
+
+async def get_meta_funnel_stats(session: AsyncSession) -> dict:
+    leads_stmt = select(func.count(User.id)).where(
+        or_(User.source.ilike("%meta%"), User.source.ilike("%gemini%"))
+    )
+    total_leads = (await session.execute(leads_stmt)).scalar() or 0
+
+    orders_stmt = (
+        select(func.count(Order.id), func.coalesce(func.sum(Order.amount), 0))
+        .join(User, Order.user_id == User.id)
+        .where(
+            or_(Order.status.in_(["paid", "finished", "confirmed", "sending"]), Order.delivered.is_(True)),
+            or_(User.source.ilike("%meta%"), User.source.ilike("%gemini%"), Order.source.ilike("%meta%")),
+        )
+    )
+    orders_res = (await session.execute(orders_stmt)).first()
+    paid_orders = orders_res[0] if orders_res else 0
+    revenue = float(orders_res[1] if orders_res else 0)
+
+    conv_rate = (paid_orders / total_leads * 100) if total_leads > 0 else 0.0
+
+    return {
+        "total_leads": total_leads,
+        "paid_orders": paid_orders,
+        "revenue": revenue,
+        "conversion_rate": conv_rate,
+    }
+
 
 

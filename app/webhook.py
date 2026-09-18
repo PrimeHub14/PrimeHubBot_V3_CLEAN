@@ -4,11 +4,13 @@ from aiogram import Bot
 from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 
+from app.config import settings
 from app.db.session import SessionLocal
 from app.db.models import Order, WalletTopUp
 from app.db import repo
 from app.services.nowpayments import verify_ipn
 from app.services.delivery import deliver_order
+from app.services.landing_page import render_gemini_bridge_html
 
 PAID_STATUSES = {"finished", "confirmed", "sending"}
 FAILED_STATUSES = {"failed", "expired", "refunded"}
@@ -201,11 +203,44 @@ def create_app(bot: Bot) -> web.Application:
             "amount": amount_val,
         })
 
+    cached_bot_username = [settings.TELEGRAM_BOT_USERNAME or ""]
+
+    async def gemini_landing_handler(request: web.Request) -> web.Response:
+        if not cached_bot_username[0]:
+            try:
+                me = await bot.get_me()
+                if me and me.username:
+                    cached_bot_username[0] = me.username
+            except Exception:
+                pass
+
+        utm_source = request.query.get("utm_source", "meta")
+        utm_campaign = request.query.get("utm_campaign", "gemini18")
+        pixel_id = request.query.get("pixel_id", "") or settings.META_PIXEL_ID
+
+        html_content = render_gemini_bridge_html(
+            bot_username=cached_bot_username[0],
+            utm_source=utm_source,
+            utm_campaign=utm_campaign,
+            pixel_id=pixel_id,
+        )
+        return web.Response(
+            text=html_content,
+            content_type="text/html",
+            charset="utf-8",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
     async def root_handler(request: web.Request) -> web.Response:
         if request.method == "POST":
             return await phonepe_webhook(request)
-        return web.Response(text="PrimeHub Premium Store is running.")
+        if any(k in request.query for k in ("utm_source", "utm_campaign", "gemini", "start")):
+            return await gemini_landing_handler(request)
+        return web.Response(text="PrimeHub Premium Store is running. Visit /gemini18 for Meta ad landing page.")
 
+    app.router.add_get("/gemini18", gemini_landing_handler)
+    app.router.add_get("/gemini", gemini_landing_handler)
+    app.router.add_get("/promo/gemini18", gemini_landing_handler)
     app.router.add_post("/nowpayments-webhook", nowpayments_webhook)
     app.router.add_get("/", root_handler)
     app.router.add_post("/", root_handler)
