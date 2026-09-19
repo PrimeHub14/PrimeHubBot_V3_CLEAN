@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from html import escape
+import logging
 import re
 
 from aiogram import F, Router
@@ -115,7 +116,8 @@ async def admin(message: Message):
         "/moveproduct PRODUCT_ID - Move product to category\n"
         "/deletecategory - Remove an empty category\n"
         "/delproduct PRODUCT_ID - Disable product\n"
-        "/addstock PRODUCT_ID - Add unique stock\n"
+        "/addstock PRODUCT_ID - Add stock (paste text or upload .txt file)\n"
+        "/importstock PRODUCT_ID - Import stock from file\n"
         "/stock PRODUCT_ID - Check available stock\n"
         "/removestock PRODUCT_ID QTY - Reduce stock\n"
         "/disablestock PRODUCT_ID - Use reusable delivery\n"
@@ -1172,20 +1174,31 @@ async def add_stock_command(message: Message, state: FSMContext):
         return
     parts = (message.text or "").split()
     if len(parts) != 2 or not parts[1].isdigit():
-        await message.answer("Usage: /addstock PRODUCT_ID\nExample: /addstock 1")
+        await message.answer(
+            "📋 <b>Usage:</b> <code>/addstock PRODUCT_ID</code>\n"
+            "<i>Example:</i> <code>/addstock 6</code> (for Gemini)\n\n"
+            "💡 <i>Tip: Run <code>/stock</code> or <code>/listproducts</code> to view all product IDs.</i>",
+            parse_mode="HTML",
+        )
         return
     product_id = int(parts[1])
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
+        current_stock = await repo.available_stock_count(session, product_id) if product else 0
     if not product:
-        await message.answer("Product not found.")
+        await message.answer("❌ Product not found.")
         return
     await state.update_data(stock_product_id=product_id)
     await state.set_state(AddStock.items)
     await message.answer(
-        f"📦 Add stock for <b>{product.name}</b>\n\n"
-        "Paste one account/key/item per line.\n\n"
-        "Example:\n<code>email1@example.com:password1\nemail2@example.com:password2</code>",
+        f"📦 <b>Add Stock for {escape(product.name)}</b> (ID: <code>#{product.id}</code>)\n"
+        f"📊 Current Available Stock: <b>{current_stock}</b>\n\n"
+        "Choose how to upload your stock:\n\n"
+        "📄 <b>Method 1 (Recommended for Bulk / 10+ items):</b>\n"
+        "Upload a <b>.txt</b> file containing your links or keys (one per line). "
+        "There is <b>NO LIMIT</b> — you can upload 20, 50, 100, or 1,000+ links at once!\n\n"
+        "✍️ <b>Method 2 (Small amount):</b>\n"
+        "Paste your links directly in this chat (one per line).",
         parse_mode="HTML",
     )
 
@@ -1195,26 +1208,83 @@ async def receive_stock_items(message: Message, state: FSMContext):
     if not admin_only(message):
         await state.clear()
         return
-    if not message.text:
-        await message.answer("Send stock as text, one item per line.")
-        return
+
     data = await state.get_data()
-    product_id = int(data["stock_product_id"])
-    items = [line.strip() for line in message.text.splitlines() if line.strip()]
+    product_id = int(data.get("stock_product_id", 0))
+    if not product_id:
+        await state.clear()
+        await message.answer("❌ Session expired. Please run <code>/addstock PRODUCT_ID</code> again.", parse_mode="HTML")
+        return
+
+    items: list[str] = []
+    source_label = "chat text"
+
+    if message.document:
+        doc = message.document
+        file_name = doc.file_name or "stock.txt"
+        source_label = f"file <code>{escape(file_name)}</code>"
+        try:
+            tg_file = await message.bot.get_file(doc.file_id)
+            raw = await message.bot.download_file(tg_file.file_path)
+            raw_bytes = raw.read() if hasattr(raw, "read") else raw
+            try:
+                content = raw_bytes.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                content = raw_bytes.decode("latin-1", errors="replace")
+
+            if file_name.lower().endswith(".csv"):
+                import csv
+                import io
+                for row in csv.reader(io.StringIO(content)):
+                    if row and row[0].strip():
+                        val = row[0].strip()
+                        if val.lower() not in {"stock", "item", "content", "link", "links", "url", "redeem_link"}:
+                            items.append(val)
+            else:
+                for line in content.splitlines():
+                    val = line.strip()
+                    if val and val.lower() not in {"stock", "item", "content", "link", "links", "url", "redeem_link"}:
+                        items.append(val)
+        except Exception as exc:
+            await message.answer(f"❌ Failed to read document: {exc}")
+            return
+    elif message.text:
+        items = [line.strip() for line in message.text.splitlines() if line.strip()]
+    else:
+        await message.answer(
+            "⚠️ Please upload a <b>.txt / .csv</b> file or paste stock items as text (one item per line).",
+            parse_mode="HTML",
+        )
+        return
+
+    if not items:
+        await message.answer("❌ No valid stock items found. Please check your text or file.")
+        return
+
     async with SessionLocal() as session:
         added = await repo.add_stock_items(session, product_id, items)
         total = await repo.available_stock_count(session, product_id)
         product = await repo.get_product(session, product_id)
+
     await state.clear()
-    await message.answer(f"✅ Added {added} stock item(s).\n📦 Available stock now: {total}")
+    await message.answer(
+        f"✅ <b>Successfully added {added} stock item(s)</b> from {source_label}!\n"
+        f"📦 <b>Available stock now:</b> {total}\n"
+        f"🏷️ <b>Product:</b> {product.name if product else f'#{product_id}'}",
+        parse_mode="HTML",
+    )
     if product and added > 0:
-        users_notified, chats_notified = await notify_restock(
-            message.bot, product, added, total
-        )
-        await message.answer(
-            f"🔔 Restock notifications sent to {users_notified} subscriber(s) "
-            f"and {chats_notified} update chat(s)."
-        )
+        try:
+            users_notified, chats_notified = await notify_restock(
+                message.bot, product, added, total
+            )
+            if users_notified or chats_notified:
+                await message.answer(
+                    f"🔔 Restock notifications sent to {users_notified} subscriber(s) "
+                    f"and {chats_notified} update chat(s)."
+                )
+        except Exception as exc:
+            logging.warning(f"Restock notification failed: {exc}")
 
 
 @router.message(Command("stock"))

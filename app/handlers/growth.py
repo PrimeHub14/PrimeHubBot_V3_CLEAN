@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.db import repo
 from app.db.session import SessionLocal
+from app.services.announcements import notify_restock
 from app.utils.security import is_admin
 
 router = Router()
@@ -209,20 +210,58 @@ async def import_stock_file(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
     if not message.document:
-        await message.answer("Please upload a CSV or TXT document."); return
+        await message.answer("Please upload a CSV or TXT document.")
+        return
     data = await state.get_data()
     product_id = int(data["import_product_id"])
     file = await message.bot.get_file(message.document.file_id)
     raw = await message.bot.download_file(file.file_path)
-    text = raw.read().decode("utf-8-sig", errors="replace")
+    raw_bytes = raw.read() if hasattr(raw, "read") else raw
+    try:
+        text = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw_bytes.decode("latin-1", errors="replace")
+
     items = []
-    for row in csv.reader(io.StringIO(text)):
-        if row and row[0].strip() and not row[0].strip().lower() in {"stock", "item", "content"}:
-            items.append(row[0].strip())
+    file_name = (message.document.file_name or "").lower()
+    if file_name.endswith(".csv"):
+        for row in csv.reader(io.StringIO(text)):
+            if row and row[0].strip() and not row[0].strip().lower() in {"stock", "item", "content", "link", "links", "url"}:
+                items.append(row[0].strip())
+    else:
+        for line in text.splitlines():
+            val = line.strip()
+            if val and not val.lower() in {"stock", "item", "content", "link", "links", "url"}:
+                items.append(val)
+
+    if not items:
+        await message.answer("❌ No valid stock items found in the document.")
+        return
+
     async with SessionLocal() as session:
         product = await repo.get_product(session, product_id)
         if not product:
-            await message.answer("Product not found."); await state.clear(); return
+            await message.answer("Product not found.")
+            await state.clear()
+            return
         added = await repo.add_stock_items(session, product_id, items)
+        total = await repo.available_stock_count(session, product_id)
+
     await state.clear()
-    await message.answer(f"✅ Imported {added} stock item(s) for product #{product_id}.")
+    await message.answer(
+        f"✅ <b>Imported {added} stock item(s)</b> for <b>{escape(product.name)}</b> (ID #{product_id}).\n"
+        f"📦 <b>Available stock now:</b> {total}",
+        parse_mode="HTML",
+    )
+    if product and added > 0:
+        try:
+            users_notified, chats_notified = await notify_restock(
+                message.bot, product, added, total
+            )
+            if users_notified or chats_notified:
+                await message.answer(
+                    f"🔔 Restock notifications sent to {users_notified} subscriber(s) "
+                    f"and {chats_notified} update chat(s)."
+                )
+        except Exception:
+            pass

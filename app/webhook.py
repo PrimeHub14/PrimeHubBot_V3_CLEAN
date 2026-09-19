@@ -231,6 +231,18 @@ def create_app(bot: Bot) -> web.Application:
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
 
+    async def hero_image_handler(request: web.Request) -> web.Response:
+        import os
+        image_path = os.path.join(os.path.dirname(__file__), "static", "gemini_model.jpg")
+        if os.path.exists(image_path):
+            with open(image_path, "rb") as f:
+                return web.Response(
+                    body=f.read(),
+                    content_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=604800"},
+                )
+        return web.Response(status=404, text="Hero image not found")
+
     async def root_handler(request: web.Request) -> web.Response:
         if request.method == "POST":
             return await phonepe_webhook(request)
@@ -238,6 +250,8 @@ def create_app(bot: Bot) -> web.Application:
             return await gemini_landing_handler(request)
         return web.Response(text="PrimeHub Premium Store is running. Visit /gemini18 for Meta ad landing page.")
 
+    app.router.add_get("/gemini-hero.jpg", hero_image_handler)
+    app.router.add_get("/static/gemini_model.jpg", hero_image_handler)
     app.router.add_get("/gemini18", gemini_landing_handler)
     app.router.add_get("/gemini", gemini_landing_handler)
     app.router.add_get("/promo/gemini18", gemini_landing_handler)

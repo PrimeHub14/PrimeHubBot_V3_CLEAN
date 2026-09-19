@@ -13,10 +13,9 @@ def render_gemini_bridge_html(
     utm_campaign: str = "gemini18",
     pixel_id: str | None = None,
 ) -> str:
-    effective_bot = bot_username or settings.TELEGRAM_BOT_USERNAME or "PrimeHubStoreBot"
-    effective_pixel = pixel_id or settings.META_PIXEL_ID or ""
+    effective_bot = bot_username or settings.TELEGRAM_BOT_USERNAME or "PrimeHubUs_Bot"
+    effective_pixel = pixel_id or settings.META_PIXEL_ID or "2035067993878515"
 
-    # Generate deep-link payload e.g. meta_fb_gemini18
     raw_payload = f"meta_{utm_source}_{utm_campaign}".strip("_")
     payload = sanitize_slug(raw_payload) or "gemini18"
 
@@ -39,8 +38,10 @@ def render_gemini_bridge_html(
     fbq('init', '{html.escape(effective_pixel)}');
     fbq('track', 'PageView');
     fbq('track', 'ViewContent', {{
-      content_name: 'Gemini AI Pro 18 Months Special',
-      content_category: 'AI Subscription'
+      content_name: 'Gemini AI Pro 18 Months + 5TB Special',
+      content_category: 'AI Subscription',
+      value: 199.00,
+      currency: 'INR'
     }});
     </script>
     <noscript><img height="1" width="1" style="display:none"
@@ -51,7 +52,6 @@ def render_gemini_bridge_html(
     else:
         pixel_code = """
     <script>
-    // Meta Pixel placeholder (Add META_PIXEL_ID to Railway variables)
     window.fbq = function() { console.log('[Meta Pixel]', arguments); };
     </script>
         """
@@ -61,27 +61,30 @@ def render_gemini_bridge_html(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Gemini AI Pro 18 Months — Exclusive Telegram Special</title>
-  <meta name="description" content="Unlock 18 Months of uninterrupted Gemini AI Pro access with 2M token context, advanced reasoning, and multimodal capabilities. Instant bot delivery.">
-  <meta property="og:title" content="Gemini AI Pro 18 Months — Exclusive Special">
-  <meta property="og:description" content="Instant Telegram Bot Delivery with 24/7 warranty and verified payment methods.">
+  <title>🎁 GEMINI AI PRO + 5TB + ANTIGRAVITY — 18 Months (Just ₹199)</title>
+  <meta name="description" content="Single-click activation on your own Google email. Get 18 Months of Gemini Advanced, 5TB Google Cloud Storage, Antigravity, Veo 3 and 1-month warranty for only ₹199!">
+  <meta property="og:title" content="GEMINI AI PRO + 5TB + ANTIGRAVITY — 18 Months (Just ₹199)">
+  <meta property="og:description" content="Single-click activation on your personal email. 5TB Storage + Gemini Advanced. Instant Telegram Delivery!">
+  <meta property="og:image" content="https://primehubbotv3clean-production.up.railway.app/gemini-hero.jpg">
   <meta property="og:type" content="product">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://primehubbotv3clean-production.up.railway.app/gemini-hero.jpg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   {pixel_code}
   <style>
     :root {{
-      --bg: #090d16;
-      --card-bg: rgba(20, 27, 45, 0.7);
-      --card-border: rgba(66, 133, 244, 0.25);
+      --bg: #070a12;
+      --card-bg: rgba(17, 24, 43, 0.75);
+      --card-border: rgba(66, 133, 244, 0.28);
       --primary: #2979ff;
       --primary-hover: #1c68e3;
-      --accent: #9c27b0;
-      --text: #f0f4f9;
+      --accent: #a855f7;
+      --text: #f8fafc;
       --text-muted: #94a3b8;
       --highlight: #00e676;
-      --warning: #ff9100;
+      --warning: #f59e0b;
     }}
     * {{
       box-sizing: border-box;
@@ -97,7 +100,8 @@ def render_gemini_bridge_html(
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 16px 16px 40px;
+      padding: 14px 14px 100px;
+      overflow-x: hidden;
     }}
     .container {{
       max-width: 480px;
@@ -113,10 +117,10 @@ def render_gemini_bridge_html(
       color: #93c5fd;
       padding: 6px 14px;
       border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
+      font-size: 11px;
+      font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.6px;
       margin-bottom: 12px;
     }}
     .pulse-dot {{
@@ -133,89 +137,168 @@ def render_gemini_bridge_html(
       100% {{ transform: scale(0.9); opacity: 0.8; }}
     }}
     .title {{
-      font-size: 28px;
-      font-weight: 800;
+      font-size: 26px;
+      font-weight: 900;
       line-height: 1.25;
-      margin-bottom: 10px;
-      background: linear-gradient(135deg, #ffffff 30%, #93c5fd 70%, #d8b4fe 100%);
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #ffffff 25%, #93c5fd 65%, #c084fc 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
+      text-align: center;
     }}
     .subtitle {{
       color: var(--text-muted);
-      font-size: 14px;
+      font-size: 13px;
       line-height: 1.5;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
+      text-align: center;
     }}
+    
+    /* Hero Model Visual Card */
+    .hero-model-card {{
+      position: relative;
+      border-radius: 20px;
+      overflow: hidden;
+      margin-bottom: 18px;
+      border: 1px solid rgba(168, 85, 247, 0.35);
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6), 0 0 25px rgba(41, 121, 255, 0.2);
+    }}
+    .hero-model-img {{
+      width: 100%;
+      height: 380px;
+      object-fit: cover;
+      object-position: top center;
+      display: block;
+    }}
+    .hero-model-overlay {{
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(to top, rgba(9, 13, 22, 0.95) 0%, rgba(9, 13, 22, 0.7) 60%, transparent 100%);
+      padding: 20px 16px 14px;
+    }}
+    .model-badge {{
+      display: inline-block;
+      background: rgba(0, 230, 118, 0.18);
+      border: 1px solid rgba(0, 230, 118, 0.5);
+      color: #69f0ae;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 6px;
+    }}
+    .model-caption {{
+      font-size: 14px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.3;
+    }}
+    .model-sub {{
+      font-size: 12px;
+      color: #94a3b8;
+      margin-top: 2px;
+    }}
+
     .deal-card {{
       background: var(--card-bg);
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
       border: 1px solid var(--card-border);
       border-radius: 20px;
-      padding: 20px;
-      margin-bottom: 20px;
+      padding: 18px;
+      margin-bottom: 18px;
       box-shadow: 0 10px 30px rgba(0,0,0,0.5);
     }}
     .timer-bar {{
       display: flex;
       align-items: center;
       justify-content: space-between;
-      background: rgba(255, 145, 0, 0.1);
-      border: 1px dashed rgba(255, 145, 0, 0.4);
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px dashed rgba(245, 158, 11, 0.45);
       padding: 8px 14px;
       border-radius: 12px;
-      font-size: 13px;
-      color: #ffb74d;
-      margin-bottom: 16px;
-      font-weight: 600;
+      font-size: 12px;
+      color: #fbbf24;
+      margin-bottom: 14px;
+      font-weight: 700;
     }}
     .countdown {{
-      font-weight: 800;
-      color: #ffa726;
+      font-weight: 900;
+      color: #f59e0b;
       font-variant-numeric: tabular-nums;
     }}
+
+    /* Price Anchor */
+    .price-box {{
+      background: linear-gradient(135deg, rgba(41, 121, 255, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%);
+      border: 1px solid rgba(41, 121, 255, 0.4);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+      text-align: center;
+    }}
+    .price-original {{
+      font-size: 13px;
+      color: #94a3b8;
+      text-decoration: line-through;
+    }}
+    .price-highlight {{
+      font-size: 30px;
+      font-weight: 900;
+      color: var(--highlight);
+      margin: 4px 0;
+      letter-spacing: -0.5px;
+    }}
+    .price-tagline {{
+      font-size: 12px;
+      color: #93c5fd;
+      font-weight: 700;
+    }}
+
     .features {{
       list-style: none;
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      margin-bottom: 20px;
+      gap: 11px;
+      margin-bottom: 18px;
     }}
     .feature-item {{
       display: flex;
       align-items: flex-start;
       gap: 12px;
-      font-size: 14px;
+      font-size: 13px;
       line-height: 1.4;
     }}
     .feature-icon {{
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 26px;
-      height: 26px;
-      min-width: 26px;
+      width: 28px;
+      height: 28px;
+      min-width: 28px;
       background: rgba(41, 121, 255, 0.2);
       border-radius: 8px;
       color: #60a5fa;
-      font-size: 14px;
+      font-size: 15px;
     }}
     .feature-item strong {{
       color: #ffffff;
     }}
+
     .cta-btn {{
       display: block;
       width: 100%;
-      background: linear-gradient(135deg, #0088cc 0%, #2979ff 100%);
+      background: linear-gradient(135deg, #0088cc 0%, #2979ff 55%, #7c3aed 100%);
       color: #ffffff;
       text-decoration: none;
       padding: 16px 20px;
       border-radius: 16px;
-      font-weight: 800;
+      font-weight: 900;
       font-size: 16px;
       text-align: center;
-      box-shadow: 0 8px 25px rgba(0, 136, 204, 0.4);
+      box-shadow: 0 8px 25px rgba(0, 136, 204, 0.45);
       transition: transform 0.2s ease, box-shadow 0.2s ease;
       cursor: pointer;
       border: none;
@@ -223,14 +306,14 @@ def render_gemini_bridge_html(
     }}
     .cta-btn:active {{
       transform: scale(0.98);
-      box-shadow: 0 4px 15px rgba(0, 136, 204, 0.3);
     }}
     .cta-subtext {{
       display: block;
-      font-size: 12px;
-      font-weight: 500;
-      opacity: 0.85;
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0.9;
       margin-top: 4px;
+      color: #e0f2fe;
     }}
     .guarantees {{
       display: flex;
@@ -238,17 +321,81 @@ def render_gemini_bridge_html(
       margin-top: 14px;
       color: var(--text-muted);
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 700;
     }}
     .guarantee-item {{
       display: flex;
       align-items: center;
       gap: 4px;
     }}
-    .section-title {{
-      font-size: 16px;
+
+    /* Steps Card */
+    .steps-card {{
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 18px;
+    }}
+    .step-line {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      margin-bottom: 8px;
+      color: #cbd5e1;
+    }}
+    .step-num {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      min-width: 22px;
+      background: rgba(245, 158, 11, 0.2);
+      border: 1px solid rgba(245, 158, 11, 0.5);
+      border-radius: 50%;
+      color: #fbbf24;
+      font-size: 11px;
+      font-weight: 800;
+    }}
+
+    /* Comparison Table */
+    .comp-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin: 12px 0 18px;
+      background: rgba(15, 23, 42, 0.65);
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.08);
+    }}
+    .comp-table th, .comp-table td {{
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }}
+    .comp-table th {{
+      background: rgba(30, 41, 59, 0.8);
+      color: #94a3b8;
       font-weight: 700;
-      margin: 24px 0 12px;
+      font-size: 11px;
+      text-transform: uppercase;
+    }}
+    .comp-table .winner {{
+      color: #00e676;
+      font-weight: 800;
+      background: rgba(0, 230, 118, 0.06);
+    }}
+    .comp-table .loser {{
+      color: #94a3b8;
+    }}
+
+    .section-title {{
+      font-size: 15px;
+      font-weight: 800;
+      margin: 22px 0 12px;
       color: #e2e8f0;
       display: flex;
       align-items: center;
@@ -258,14 +405,14 @@ def render_gemini_bridge_html(
       background: rgba(15, 23, 42, 0.6);
       border: 1px solid rgba(255,255,255,0.06);
       border-radius: 16px;
-      padding: 16px;
-      margin-bottom: 12px;
+      padding: 14px;
+      margin-bottom: 10px;
     }}
     .review-header {{
       display: flex;
       justify-content: space-between;
       margin-bottom: 6px;
-      font-size: 13px;
+      font-size: 12px;
     }}
     .reviewer {{
       font-weight: 700;
@@ -275,10 +422,12 @@ def render_gemini_bridge_html(
       color: #fbbf24;
     }}
     .review-text {{
-      font-size: 13px;
+      font-size: 12px;
       color: var(--text-muted);
-      line-height: 1.4;
+      line-height: 1.45;
     }}
+
+    /* FAQ */
     .faq-item {{
       background: rgba(15, 23, 42, 0.6);
       border: 1px solid rgba(255,255,255,0.06);
@@ -287,19 +436,19 @@ def render_gemini_bridge_html(
       overflow: hidden;
     }}
     .faq-q {{
-      padding: 14px 16px;
-      font-size: 13px;
-      font-weight: 600;
+      padding: 12px 14px;
+      font-size: 12.5px;
+      font-weight: 700;
       cursor: pointer;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }}
     .faq-a {{
-      padding: 0 16px 14px;
-      font-size: 13px;
+      padding: 0 14px 12px;
+      font-size: 12px;
       color: var(--text-muted);
-      line-height: 1.4;
+      line-height: 1.45;
       display: none;
     }}
     .faq-item.active .faq-a {{
@@ -309,9 +458,111 @@ def render_gemini_bridge_html(
       transform: rotate(45deg);
     }}
     .faq-toggle {{
-      font-size: 18px;
+      font-size: 16px;
       transition: transform 0.2s;
     }}
+
+    /* Sticky Bottom Mobile Bar */
+    .sticky-bar {{
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(7, 10, 18, 0.94);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 10px 14px;
+      border-top: 1px solid rgba(66, 133, 244, 0.3);
+      display: flex;
+      justify-content: center;
+      z-index: 999;
+      transform: translateY(120%);
+      transition: transform 0.3s ease;
+    }}
+    .sticky-bar.visible {{
+      transform: translateY(0);
+    }}
+    .sticky-content {{
+      max-width: 480px;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }}
+    .sticky-price-wrap {{
+      display: flex;
+      flex-direction: column;
+    }}
+    .sticky-price {{
+      font-size: 20px;
+      font-weight: 900;
+      color: var(--highlight);
+      line-height: 1;
+    }}
+    .sticky-strike {{
+      font-size: 11px;
+      color: #64748b;
+      text-decoration: line-through;
+    }}
+    .sticky-sub {{
+      font-size: 10px;
+      color: #93c5fd;
+      font-weight: 700;
+    }}
+    .sticky-cta-btn {{
+      background: linear-gradient(135deg, #0088cc 0%, #2979ff 100%);
+      color: #ffffff;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(0, 136, 204, 0.4);
+    }}
+
+    /* Live Buyer Toast */
+    .buyer-toast {{
+      position: fixed;
+      bottom: 78px;
+      left: 14px;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(0, 230, 118, 0.35);
+      border-radius: 12px;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 998;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+      opacity: 0;
+      transform: translateY(15px);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+      pointer-events: none;
+      max-width: 320px;
+    }}
+    .buyer-toast.show {{
+      opacity: 1;
+      transform: translateY(0);
+    }}
+    .toast-dot {{
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #00e676;
+      box-shadow: 0 0 8px #00e676;
+    }}
+    .toast-text {{
+      font-size: 11px;
+      color: #e2e8f0;
+      line-height: 1.3;
+    }}
+    .toast-time {{
+      color: #94a3b8;
+      font-size: 10px;
+    }}
+
     .footer {{
       margin-top: 30px;
       text-align: center;
@@ -328,7 +579,7 @@ def render_gemini_bridge_html(
     <div style="text-align: center;">
       <div class="badge">
         <span class="pulse-dot"></span>
-        MEGA PRICE DROP ALERT • LIMITED TIME
+        MEGA PRICE DROP ALERT • LIMITED SLOTS
       </div>
       <h1 class="title">GEMINI AI PRO + 5TB + ANTIGRAVITY</h1>
       <p class="subtitle">
@@ -336,21 +587,34 @@ def render_gemini_bridge_html(
       </p>
     </div>
 
+    <!-- Visual Brand Ambassador Hero Card -->
+    <div class="hero-model-card">
+      <img src="/gemini-hero.jpg" alt="Gemini AI Pro 18 Months VIP Ambassador" class="hero-model-img">
+      <div class="hero-model-overlay">
+        <span class="model-badge">✨ VIP 18-MONTH ACTIVATION</span>
+        <div class="model-caption">"Claim your 5TB Google Cloud Storage + Gemini Advanced on your personal email."</div>
+        <div class="model-sub">Instant automated bot delivery • 1-Month Warranty Included</div>
+      </div>
+    </div>
+
     <!-- Main Offer Card -->
-    <div class="deal-card">
+    <div class="deal-card" id="mainOffer">
       <div class="timer-bar">
-        <span>🔥 Limited Redeem Codes Available</span>
+        <span>🔥 Limited Redeem Links Available</span>
         <span class="countdown" id="timer">14:59</span>
       </div>
 
       <!-- Price Anchor Box -->
-      <div style="background: rgba(41, 121, 255, 0.12); border: 1px solid rgba(41, 121, 255, 0.4); border-radius: 14px; padding: 14px; margin-bottom: 18px; text-align: center;">
-        <div style="font-size: 13px; color: #94a3b8; text-decoration: line-through;">Original Price: ₹35,999 &bull; Regular: ₹799</div>
-        <div style="font-size: 26px; font-weight: 800; color: #00e676; margin: 4px 0;">JUST ₹199 ONLY!</div>
-        <div style="font-size: 12px; color: #93c5fd; font-weight: 600;">⚡ Direct on Your Email &bull; No Shared Logins &bull; No Family Invites</div>
+      <div class="price-box">
+        <div class="price-original">Original Price: ₹35,999 &bull; Regular: ₹799</div>
+        <div class="price-highlight">JUST ₹199 ONLY!</div>
+        <div class="price-tagline">⚡ Direct on Your Email &bull; No Shared Logins &bull; No Family Invites</div>
       </div>
 
-      <div style="font-size: 14px; font-weight: 700; color: #e2e8f0; margin-bottom: 12px;">🎁 18-MONTH PREMIUM PACKAGE INCLUDES:</div>
+      <div style="font-size: 13px; font-weight: 800; color: #e2e8f0; margin-bottom: 12px; letter-spacing: 0.3px;">
+        🎁 YOUR 18-MONTH PREMIUM PACKAGE INCLUDES:
+      </div>
+
       <ul class="features">
         <li class="feature-item">
           <span class="feature-icon">💾</span>
@@ -358,11 +622,11 @@ def render_gemini_bridge_html(
         </li>
         <li class="feature-item">
           <span class="feature-icon">🧠</span>
-          <div><strong>Gemini Advanced AI:</strong> Advanced AI, deep reasoning & full coding features.</div>
+          <div><strong>Gemini Advanced AI:</strong> Gemini 1.5 Pro multimodal reasoning & full coding features.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">🍌</span>
-          <div><strong>Nano Banana Pro & Veo 3:</strong> State-of-the-art video & multimodal generation.</div>
+          <div><strong>Nano Banana Pro & Veo 3:</strong> State-of-the-art AI video & image creation.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">🌊</span>
@@ -370,7 +634,7 @@ def render_gemini_bridge_html(
         </li>
         <li class="feature-item">
           <span class="feature-icon">🚀</span>
-          <div><strong>Antigravity Access & NotebookLM:</strong> Premium NotebookLM & Deep Research tools.</div>
+          <div><strong>Antigravity Access & NotebookLM:</strong> Deep Research tools & audio podcasts.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">💻</span>
@@ -382,18 +646,28 @@ def render_gemini_bridge_html(
         </li>
         <li class="feature-item">
           <span class="feature-icon">🛡️</span>
-          <div><strong>1 Month Warranty:</strong> Full replacement warranty and setup assistance included.</div>
+          <div><strong>1-Month Warranty:</strong> Full replacement warranty & dedicated 24/7 assistance.</div>
         </li>
       </ul>
 
-      <!-- Activation Steps -->
-      <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 14px; margin-bottom: 18px;">
-        <div style="font-size: 13px; font-weight: 700; color: #f59e0b; margin-bottom: 8px;">⚡ 4 Simple Activation Steps:</div>
-        <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6;">
-          1️⃣ Copy the redeem code / activation link sent by our bot<br>
-          2️⃣ Paste it in your Chrome browser<br>
-          3️⃣ Choose your own Google account<br>
-          4️⃣ Click "Activate Plan" — Done!
+      <!-- 4 Activation Steps -->
+      <div class="steps-card">
+        <div style="font-size: 13px; font-weight: 800; color: #f59e0b; margin-bottom: 10px;">⚡ 4 Simple Activation Steps:</div>
+        <div class="step-line">
+          <span class="step-num">1</span>
+          <span>Copy the redeem code link sent by our verified bot</span>
+        </div>
+        <div class="step-line">
+          <span class="step-num">2</span>
+          <span>Paste it into your Chrome browser</span>
+        </div>
+        <div class="step-line">
+          <span class="step-num">3</span>
+          <span>Choose your own personal Google account</span>
+        </div>
+        <div class="step-line">
+          <span class="step-num">4</span>
+          <span>Click <strong>"Activate Plan"</strong> &mdash; Done instantly!</span>
         </div>
       </div>
 
@@ -409,8 +683,47 @@ def render_gemini_bridge_html(
       </div>
     </div>
 
-    <!-- Social Proof -->
-    <div class="section-title">💬 Verified Customer Reviews</div>
+    <!-- Comparison Table -->
+    <div class="section-title">📊 Why Choose Our ₹199 Special?</div>
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Official Google</th>
+          <th>Prime Hub VIP</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Cost (18 Months)</strong></td>
+          <td class="loser">₹35,999</td>
+          <td class="winner">₹199 Only</td>
+        </tr>
+        <tr>
+          <td><strong>Cloud Storage</strong></td>
+          <td class="loser">2 TB</td>
+          <td class="winner">5 TB Storage</td>
+        </tr>
+        <tr>
+          <td><strong>Activation</strong></td>
+          <td class="loser">Monthly Billing</td>
+          <td class="winner">Single Click on Email</td>
+        </tr>
+        <tr>
+          <td><strong>Veo 3 & Antigravity</strong></td>
+          <td class="loser">Limited</td>
+          <td class="winner">Full Access Included</td>
+        </tr>
+        <tr>
+          <td><strong>Replacement Warranty</strong></td>
+          <td class="loser">Standard</td>
+          <td class="winner">1-Month Full Warranty</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Verified Customer Reviews -->
+    <div class="section-title">💬 Verified Customer Feedback</div>
     
     <div class="reviews-card">
       <div class="review-header">
@@ -432,6 +745,16 @@ def render_gemini_bridge_html(
       </p>
     </div>
 
+    <div class="reviews-card">
+      <div class="review-header">
+        <span class="reviewer">Karan V. • Full-Stack Developer</span>
+        <span class="stars">★★★★★</span>
+      </div>
+      <p class="review-text">
+        "The 2M context and Gemini Code Assist are a lifesaver. Plus 5TB Drive for all my client backups."
+      </p>
+    </div>
+
     <!-- FAQ Accordion -->
     <div class="section-title">❓ Frequently Asked Questions</div>
 
@@ -441,7 +764,7 @@ def render_gemini_bridge_html(
         <span class="faq-toggle">+</span>
       </div>
       <div class="faq-a">
-        Yes! You will receive a direct Redeem Code link. You open it in Chrome and activate it on your personal Google account. No shared passwords, no family invite requests.
+        Yes! You receive a direct official Redeem Code link. You open it in Chrome and activate it on your own Google account. No passwords or family invite requests needed.
       </div>
     </div>
 
@@ -473,6 +796,31 @@ def render_gemini_bridge_html(
 
   </div>
 
+  <!-- Sticky Bottom Bar on Mobile -->
+  <div class="sticky-bar" id="stickyBar">
+    <div class="sticky-content">
+      <div class="sticky-price-wrap">
+        <div>
+          <span class="sticky-price">₹199</span>
+          <span class="sticky-strike">₹35,999</span>
+        </div>
+        <span class="sticky-sub">5TB on Personal Email</span>
+      </div>
+      <button class="sticky-cta-btn" onclick="openTelegramBot(event)">
+        Claim on Telegram ⚡
+      </button>
+    </div>
+  </div>
+
+  <!-- Live Buyer Notification Toast -->
+  <div class="buyer-toast" id="buyerToast">
+    <div class="toast-dot"></div>
+    <div class="toast-text">
+      <strong id="toastName">Rahul S. from Bangalore</strong><br>
+      <span>Activated 18M Gemini + 5TB &bull; <span class="toast-time" id="toastTime">2m ago</span></span>
+    </div>
+  </div>
+
   <script>
     // 15-minute countdown urgency timer
     let minutes = 14;
@@ -500,20 +848,70 @@ def render_gemini_bridge_html(
       el.classList.toggle('active');
     }}
 
-    // Telegram Bot Deep-Link Redirector
+    // Sticky Bottom Bar scroll listener
+    const stickyBar = document.getElementById('stickyBar');
+    const mainOffer = document.getElementById('mainOffer');
+    window.addEventListener('scroll', function() {{
+      if (mainOffer) {{
+        const rect = mainOffer.getBoundingClientRect();
+        if (rect.bottom < 100) {{
+          stickyBar.classList.add('visible');
+        }} else {{
+          stickyBar.classList.remove('visible');
+        }}
+      }}
+    }});
+
+    // Live Social Proof Notification Popups
+    const buyers = [
+      {{ name: "Rahul S. from Bangalore", time: "2m ago" }},
+      {{ name: "Priya M. from Mumbai", time: "4m ago" }},
+      {{ name: "Vikram R. from Delhi NCR", time: "7m ago" }},
+      {{ name: "Ananya K. from Hyderabad", time: "9m ago" }},
+      {{ name: "Sameer T. from Pune", time: "11m ago" }},
+      {{ name: "Aditya P. from Chennai", time: "14m ago" }},
+      {{ name: "Kavita D. from Kolkata", time: "18m ago" }}
+    ];
+    let toastIndex = 0;
+    const toast = document.getElementById('buyerToast');
+    const toastName = document.getElementById('toastName');
+    const toastTime = document.getElementById('toastTime');
+
+    function showNextToast() {{
+      if (!toast) return;
+      const b = buyers[toastIndex % buyers.length];
+      toastName.textContent = b.name;
+      toastTime.textContent = b.time;
+      toast.classList.add('show');
+
+      setTimeout(function() {{
+        toast.classList.remove('show');
+      }}, 4000);
+
+      toastIndex++;
+    }}
+    setTimeout(function() {{
+      showNextToast();
+      setInterval(showNextToast, 9000);
+    }}, 2500);
+
+    // Telegram Bot Deep-Link Redirector with Pixel Tracking
     function openTelegramBot(e) {{
       if (e && e.preventDefault) e.preventDefault();
 
-      // Track Meta Pixel Lead event
       try {{
         if (typeof fbq === 'function') {{
           fbq('track', 'Lead', {{
-            content_name: 'Gemini AI Pro 18 Months',
+            content_name: 'Gemini AI Pro 18 Months + 5TB',
             content_category: 'AI Subscription',
-            value: 1.00,
-            currency: 'USD'
+            value: 199.00,
+            currency: 'INR'
           }});
-          fbq('track', 'InitiateCheckout');
+          fbq('track', 'InitiateCheckout', {{
+            content_name: 'Gemini AI Pro 18 Months + 5TB',
+            value: 199.00,
+            currency: 'INR'
+          }});
         }}
       }} catch(err) {{
         console.warn('Pixel track error', err);
@@ -522,7 +920,6 @@ def render_gemini_bridge_html(
       const deepLink = "{deep_link}";
       const webFallback = "{web_fallback}";
 
-      // Attempt native app protocol first, fallback to web
       let fallbackTimer = setTimeout(function() {{
         window.location.href = webFallback;
       }}, 500);
