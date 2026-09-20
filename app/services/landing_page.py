@@ -1,6 +1,7 @@
 from __future__ import annotations
 import html
 import re
+import time
 from app.config import settings
 
 def sanitize_slug(text: str) -> str:
@@ -13,6 +14,7 @@ def render_gemini_bridge_html(
     utm_campaign: str = "gemini18",
     pixel_id: str | None = None,
 ) -> str:
+    cache_buster = int(time.time())
     effective_bot = bot_username or settings.TELEGRAM_BOT_USERNAME or "PrimeHubUs_Bot"
     effective_pixel = pixel_id or settings.META_PIXEL_ID or "2035067993878515"
 
@@ -65,10 +67,10 @@ def render_gemini_bridge_html(
   <meta name="description" content="Single-click activation on your own Google email. Get 18 Months of Gemini Advanced, 5TB Google Cloud Storage, Antigravity, Veo 3 and 1-month warranty for only ₹199!">
   <meta property="og:title" content="GEMINI AI PRO + 5TB + ANTIGRAVITY — 18 Months (Just ₹199)">
   <meta property="og:description" content="Single-click activation on your personal email. 5TB Storage + Gemini Advanced. Instant Telegram Delivery!">
-  <meta property="og:image" content="https://primehubbotv3clean-production.up.railway.app/gemini-hero.jpg">
+  <meta property="og:image" content="https://primehubbotv3clean-production.up.railway.app/gemini-poster.jpg">
   <meta property="og:type" content="product">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:image" content="https://primehubbotv3clean-production.up.railway.app/gemini-hero.jpg">
+  <meta name="twitter:image" content="https://primehubbotv3clean-production.up.railway.app/gemini-poster.jpg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -672,7 +674,7 @@ def render_gemini_bridge_html(
 
     <!-- Hero Poster Showcase (Full 1:1 Creative) -->
     <div class="hero-poster-card">
-      <img src="/gemini-hero.jpg" alt="Gemini AI Pro 18 Months VIP Offer - Prime Hub" class="hero-poster-img">
+      <img src="/gemini-poster.jpg?v={cache_buster}" alt="Gemini AI Pro 18 Months VIP Offer - Prime Hub" class="hero-poster-img">
       <div class="poster-footer-bar">
         <span>🔒 <span class="hl">100% Matching Ad Deal:</span> Instant Redeem On Personal Email &bull; ₹199 Only</span>
       </div>
@@ -694,11 +696,11 @@ def render_gemini_bridge_html(
 
       <div class="stock-progress-wrap">
         <div class="stock-header">
-          <span>Batch Status: <strong>Selling Fast</strong></span>
-          <span class="stock-highlight">Only 6 Codes Remaining</span>
+          <span>Batch Status: <strong style="color: #60a5fa;">Selling Fast ⚡</strong></span>
+          <span class="stock-highlight">🔥 Only <span id="dynamicStock">289</span> Codes Remaining</span>
         </div>
         <div class="stock-track">
-          <div class="stock-fill"></div>
+          <div class="stock-fill" id="stockFillBar" style="width: 72%;"></div>
         </div>
       </div>
 
@@ -940,6 +942,20 @@ def render_gemini_bridge_html(
   </div>
 
   <script>
+    // Dynamic random stock counter: always 150+ codes remaining (e.g. 165 to 295)
+    (function() {{
+      const minCodes = 165;
+      const maxCodes = 295;
+      const randomCodes = Math.floor(Math.random() * (maxCodes - minCodes + 1)) + minCodes;
+      const stockEl = document.getElementById('dynamicStock');
+      const barEl = document.getElementById('stockFillBar');
+      if (stockEl) stockEl.textContent = randomCodes;
+      if (barEl) {{
+        const pct = Math.min(88, Math.max(50, Math.round(((500 - randomCodes) / 500) * 100)));
+        barEl.style.width = pct + '%';
+      }}
+    }})();
+
     // 15-minute countdown urgency timer
     let minutes = 14;
     let seconds = 59;

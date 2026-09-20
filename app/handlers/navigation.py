@@ -146,7 +146,9 @@ async def start_command(message: Message, state: FSMContext) -> None:
             photo_to_send = product.image_file_id
             if not photo_to_send:
                 import os
-                local_static_img = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "gemini_model.jpg")
+                local_static_img = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "gemini_poster.jpg")
+                if not os.path.exists(local_static_img):
+                    local_static_img = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "gemini_model.jpg")
                 if os.path.exists(local_static_img):
                     from aiogram.types import FSInputFile
                     photo_to_send = FSInputFile(local_static_img)
