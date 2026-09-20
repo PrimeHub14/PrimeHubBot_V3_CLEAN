@@ -143,17 +143,25 @@ async def start_command(message: Message, state: FSMContext) -> None:
 
             kb = meta_gemini_landing_kb(product.id, price_val, available_stock)
             sent = False
-            if product.image_file_id:
+            photo_to_send = product.image_file_id
+            if not photo_to_send:
+                import os
+                local_static_img = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "gemini_model.jpg")
+                if os.path.exists(local_static_img):
+                    from aiogram.types import FSInputFile
+                    photo_to_send = FSInputFile(local_static_img)
+
+            if photo_to_send:
                 try:
                     if len(caption) <= 1024:
                         await message.answer_photo(
-                            product.image_file_id,
+                            photo_to_send,
                             caption=caption,
                             reply_markup=kb,
                             parse_mode="HTML",
                         )
                     else:
-                        await message.answer_photo(product.image_file_id)
+                        await message.answer_photo(photo_to_send)
                         await message.answer(
                             caption,
                             reply_markup=kb,

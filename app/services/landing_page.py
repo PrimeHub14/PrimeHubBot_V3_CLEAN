@@ -104,16 +104,68 @@ def render_gemini_bridge_html(
       overflow-x: hidden;
     }}
     .container {{
-      max-width: 480px;
+      max-width: 500px;
       width: 100%;
       margin: 0 auto;
     }}
+
+    /* Brand Header */
+    .brand-header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      margin-bottom: 16px;
+      backdrop-filter: blur(10px);
+    }}
+    .brand-logo-wrap {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }}
+    .brand-icon {{
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, #a855f7 0%, #2979ff 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 900;
+      color: #fff;
+    }}
+    .brand-name {{
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+      color: #ffffff;
+    }}
+    .brand-name span {{
+      color: #93c5fd;
+    }}
+    .brand-verified {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #69f0ae;
+      background: rgba(0, 230, 118, 0.12);
+      border: 1px solid rgba(0, 230, 118, 0.35);
+      padding: 3px 10px;
+      border-radius: 999px;
+    }}
+
     .badge {{
       display: inline-flex;
       align-items: center;
       gap: 6px;
       background: rgba(41, 121, 255, 0.15);
-      border: 1px solid rgba(41, 121, 255, 0.4);
+      border: 1px solid rgba(41, 121, 255, 0.45);
       color: #93c5fd;
       padding: 6px 14px;
       border-radius: 999px;
@@ -121,7 +173,7 @@ def render_gemini_bridge_html(
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.6px;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }}
     .pulse-dot {{
       width: 8px;
@@ -137,10 +189,10 @@ def render_gemini_bridge_html(
       100% {{ transform: scale(0.9); opacity: 0.8; }}
     }}
     .title {{
-      font-size: 26px;
+      font-size: 25px;
       font-weight: 900;
       line-height: 1.25;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       background: linear-gradient(135deg, #ffffff 25%, #93c5fd 65%, #c084fc 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -153,52 +205,40 @@ def render_gemini_bridge_html(
       margin-bottom: 16px;
       text-align: center;
     }}
-    
-    /* Hero Model Visual Card */
-    .hero-model-card {{
+
+    /* Hero Poster Showcase (Full 1:1 Creative) */
+    .hero-poster-card {{
       position: relative;
       border-radius: 20px;
       overflow: hidden;
-      margin-bottom: 18px;
-      border: 1px solid rgba(168, 85, 247, 0.35);
-      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6), 0 0 25px rgba(41, 121, 255, 0.2);
+      margin-bottom: 16px;
+      border: 2px solid rgba(168, 85, 247, 0.45);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 35px rgba(168, 85, 247, 0.25);
+      background: #090d16;
     }}
-    .hero-model-img {{
+    .hero-poster-img {{
       width: 100%;
-      height: 380px;
-      object-fit: cover;
-      object-position: top center;
+      height: auto;
+      aspect-ratio: 1 / 1;
       display: block;
+      border-top-left-radius: 18px;
+      border-top-right-radius: 18px;
     }}
-    .hero-model-overlay {{
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      background: linear-gradient(to top, rgba(9, 13, 22, 0.95) 0%, rgba(9, 13, 22, 0.7) 60%, transparent 100%);
-      padding: 20px 16px 14px;
+    .poster-footer-bar {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: linear-gradient(90deg, rgba(15, 23, 42, 0.98), rgba(30, 27, 75, 0.98));
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 10px 14px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #93c5fd;
+      text-align: center;
     }}
-    .model-badge {{
-      display: inline-block;
-      background: rgba(0, 230, 118, 0.18);
-      border: 1px solid rgba(0, 230, 118, 0.5);
-      color: #69f0ae;
-      font-size: 11px;
-      font-weight: 800;
-      padding: 4px 10px;
-      border-radius: 999px;
-      margin-bottom: 6px;
-    }}
-    .model-caption {{
-      font-size: 14px;
-      font-weight: 800;
-      color: #ffffff;
-      line-height: 1.3;
-    }}
-    .model-sub {{
-      font-size: 12px;
-      color: #94a3b8;
-      margin-top: 2px;
+    .poster-footer-bar span.hl {{
+      color: #00e676;
     }}
 
     .deal-card {{
@@ -217,17 +257,49 @@ def render_gemini_bridge_html(
       justify-content: space-between;
       background: rgba(245, 158, 11, 0.12);
       border: 1px dashed rgba(245, 158, 11, 0.45);
-      padding: 8px 14px;
+      padding: 9px 14px;
       border-radius: 12px;
       font-size: 12px;
       color: #fbbf24;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
       font-weight: 700;
     }}
     .countdown {{
       font-weight: 900;
       color: #f59e0b;
       font-variant-numeric: tabular-nums;
+      font-size: 14px;
+    }}
+
+    .stock-progress-wrap {{
+      background: rgba(15, 23, 42, 0.8);
+      border-radius: 10px;
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }}
+    .stock-header {{
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 700;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+    }}
+    .stock-highlight {{
+      color: #f87171;
+    }}
+    .stock-track {{
+      height: 7px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      overflow: hidden;
+    }}
+    .stock-fill {{
+      height: 100%;
+      width: 86%;
+      background: linear-gradient(90deg, #f59e0b, #ef4444);
+      border-radius: 999px;
     }}
 
     /* Price Anchor */
@@ -575,40 +647,66 @@ def render_gemini_bridge_html(
 <body>
   <div class="container">
     
-    <!-- Top Badge -->
+    <!-- Verified Store Header -->
+    <div class="brand-header">
+      <div class="brand-logo-wrap">
+        <div class="brand-icon">P</div>
+        <div class="brand-name">PRIME <span>HUB</span></div>
+      </div>
+      <div class="brand-verified">
+        ✓ Verified Store
+      </div>
+    </div>
+
+    <!-- Top Badge & Heading -->
     <div style="text-align: center;">
       <div class="badge">
         <span class="pulse-dot"></span>
-        MEGA PRICE DROP ALERT • LIMITED SLOTS
+        MEGA PRICE DROP &bull; LIMITED REDEEM CODES
       </div>
       <h1 class="title">GEMINI AI PRO + 5TB + ANTIGRAVITY</h1>
       <p class="subtitle">
-        18 Months Uninterrupted Access On Your Personal Email • Quick Single-Click Activation
+        18 Months Uninterrupted Access On Your Personal Email &bull; Single-Click Activation
       </p>
     </div>
 
-    <!-- Visual Brand Ambassador Hero Card -->
-    <div class="hero-model-card">
-      <img src="/gemini-hero.jpg" alt="Gemini AI Pro 18 Months VIP Ambassador" class="hero-model-img">
-      <div class="hero-model-overlay">
-        <span class="model-badge">✨ VIP 18-MONTH ACTIVATION</span>
-        <div class="model-caption">"Claim your 5TB Google Cloud Storage + Gemini Advanced on your personal email."</div>
-        <div class="model-sub">Instant automated bot delivery • 1-Month Warranty Included</div>
+    <!-- Hero Poster Showcase (Full 1:1 Creative) -->
+    <div class="hero-poster-card">
+      <img src="/gemini-hero.jpg" alt="Gemini AI Pro 18 Months VIP Offer - Prime Hub" class="hero-poster-img">
+      <div class="poster-footer-bar">
+        <span>🔒 <span class="hl">100% Matching Ad Deal:</span> Instant Redeem On Personal Email &bull; ₹199 Only</span>
       </div>
     </div>
 
+    <!-- Primary Immediate CTA Button -->
+    <button id="cta-button-top" class="cta-btn" onclick="openTelegramBot(event)">
+      👉 Claim 18-Month Plan for ₹199
+      <span class="cta-subtext">Instant Automated Delivery via @PrimeHubUs_Bot</span>
+    </button>
+
     <!-- Main Offer Card -->
     <div class="deal-card" id="mainOffer">
+      <!-- Countdown & Scarcity -->
       <div class="timer-bar">
-        <span>🔥 Limited Redeem Links Available</span>
+        <span>🔥 Promo Link Discount Ends In:</span>
         <span class="countdown" id="timer">14:59</span>
+      </div>
+
+      <div class="stock-progress-wrap">
+        <div class="stock-header">
+          <span>Batch Status: <strong>Selling Fast</strong></span>
+          <span class="stock-highlight">Only 6 Codes Remaining</span>
+        </div>
+        <div class="stock-track">
+          <div class="stock-fill"></div>
+        </div>
       </div>
 
       <!-- Price Anchor Box -->
       <div class="price-box">
-        <div class="price-original">Original Price: ₹35,999 &bull; Regular: ₹799</div>
+        <div class="price-original">Original: ₹35,999 &bull; Regular Store: ₹799</div>
         <div class="price-highlight">JUST ₹199 ONLY!</div>
-        <div class="price-tagline">⚡ Direct on Your Email &bull; No Shared Logins &bull; No Family Invites</div>
+        <div class="price-tagline">⚡ One-Time Payment &bull; Direct On Personal Email &bull; No Passwords Needed</div>
       </div>
 
       <div style="font-size: 13px; font-weight: 800; color: #e2e8f0; margin-bottom: 12px; letter-spacing: 0.3px;">
@@ -618,77 +716,77 @@ def render_gemini_bridge_html(
       <ul class="features">
         <li class="feature-item">
           <span class="feature-icon">💾</span>
-          <div><strong>5TB Premium Storage:</strong> For Google Drive + Gmail + Google Photos.</div>
+          <div><strong>5TB Premium Cloud Storage:</strong> Full space for Google Drive + Gmail + Google Photos.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">🧠</span>
-          <div><strong>Gemini Advanced AI:</strong> Gemini 1.5 Pro multimodal reasoning & full coding features.</div>
+          <div><strong>Gemini Advanced AI:</strong> Gemini 1.5 Pro multimodal reasoning & 2,000,000 token context.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">🍌</span>
-          <div><strong>Nano Banana Pro & Veo 3:</strong> State-of-the-art AI video & image creation.</div>
+          <div><strong>Nano Banana Pro & Veo 3:</strong> Next-generation AI video creation & cinema image tools.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">🌊</span>
-          <div><strong>Google Flow & Whisk:</strong> 1,000 credits refreshed every month.</div>
+          <div><strong>Google Flow & Whisk:</strong> 1,000 generation credits refreshed every single month.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">🚀</span>
-          <div><strong>Antigravity Access & NotebookLM:</strong> Deep Research tools & audio podcasts.</div>
+          <div><strong>Antigravity Access & NotebookLM:</strong> Deep Research tools, source synthesis & audio podcasts.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">💻</span>
-          <div><strong>Gemini Code Assist & CLI:</strong> Enterprise-grade coding assistant & Health Premium.</div>
+          <div><strong>Gemini Code Assist & CLI:</strong> Enterprise terminal CLI, deep refactoring & coding engine.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">👨‍👩‍👧‍👦</span>
-          <div><strong>Add Up to 5 Family Members:</strong> Share your 5TB plan with your loved ones.</div>
+          <div><strong>Add Up to 5 Family Members:</strong> Share your 5TB plan with loved ones at zero extra cost.</div>
         </li>
         <li class="feature-item">
           <span class="feature-icon">🛡️</span>
-          <div><strong>1-Month Warranty:</strong> Full replacement warranty & dedicated 24/7 assistance.</div>
+          <div><strong>1-Month Replacement Warranty:</strong> Full 1-month replacement guarantee & 24/7 dedicated support.</div>
         </li>
       </ul>
 
-      <!-- 4 Activation Steps -->
+      <!-- 4 Simple Steps -->
       <div class="steps-card">
         <div style="font-size: 13px; font-weight: 800; color: #f59e0b; margin-bottom: 10px;">⚡ 4 Simple Activation Steps:</div>
         <div class="step-line">
           <span class="step-num">1</span>
-          <span>Copy the redeem code link sent by our verified bot</span>
+          <span>Tap <strong>"Claim on Telegram"</strong> to launch @PrimeHubUs_Bot</span>
         </div>
         <div class="step-line">
           <span class="step-num">2</span>
-          <span>Paste it into your Chrome browser</span>
+          <span>Select 18-Month Plan & complete instant UPI payment (₹199)</span>
         </div>
         <div class="step-line">
           <span class="step-num">3</span>
-          <span>Choose your own personal Google account</span>
+          <span>Bot sends your official Google Redeem Code link automatically</span>
         </div>
         <div class="step-line">
           <span class="step-num">4</span>
-          <span>Click <strong>"Activate Plan"</strong> &mdash; Done instantly!</span>
+          <span>Open link in Chrome, select your personal Gmail & click <strong>"Activate Plan"</strong> &mdash; Done!</span>
         </div>
       </div>
 
       <button id="cta-button" class="cta-btn" onclick="openTelegramBot(event)">
-        👉 Claim 18-Month Plan for ₹199
-        <span class="cta-subtext">Instant Bot Redeem Link • UPI & Crypto Accepted</span>
+        👉 Click Here to Open Bot & Claim (₹199)
+        <span class="cta-subtext">Instant Auto-Delivery &bull; UPI / Crypto / Binance Accepted</span>
       </button>
 
       <div class="guarantees">
-        <div class="guarantee-item">⚡ 1-Click Setup</div>
+        <div class="guarantee-item">⚡ 1-Click Redeem</div>
         <div class="guarantee-item">🛡️ 1-Month Warranty</div>
-        <div class="guarantee-item">⭐ 4.9/5 Rating</div>
+        <div class="guarantee-item">🔒 100% Private Email</div>
       </div>
     </div>
 
     <!-- Comparison Table -->
-    <div class="section-title">📊 Why Choose Our ₹199 Special?</div>
+    <div class="section-title">📊 Why Choose Our Exclusive ₹199 Deal?</div>
     <table class="comp-table">
       <thead>
         <tr>
-          <th>Feature</th>
+          <th>Plan Feature</th>
           <th>Official Google</th>
           <th>Prime Hub VIP</th>
         </tr>
@@ -697,7 +795,7 @@ def render_gemini_bridge_html(
         <tr>
           <td><strong>Cost (18 Months)</strong></td>
           <td class="loser">₹35,999</td>
-          <td class="winner">₹199 Only</td>
+          <td class="winner">₹199 (Save 99%)</td>
         </tr>
         <tr>
           <td><strong>Cloud Storage</strong></td>
@@ -706,17 +804,17 @@ def render_gemini_bridge_html(
         </tr>
         <tr>
           <td><strong>Activation</strong></td>
-          <td class="loser">Monthly Billing</td>
+          <td class="loser">Auto-Debit Credit Card</td>
           <td class="winner">Single Click on Email</td>
         </tr>
         <tr>
-          <td><strong>Veo 3 & Antigravity</strong></td>
-          <td class="loser">Limited</td>
-          <td class="winner">Full Access Included</td>
+          <td><strong>Family Sharing / Access</strong></td>
+          <td class="loser">Individual Only</td>
+          <td class="winner">Individual + Add 5 Family Members</td>
         </tr>
         <tr>
-          <td><strong>Replacement Warranty</strong></td>
-          <td class="loser">Standard</td>
+          <td><strong>Warranty & Support</strong></td>
+          <td class="loser">Standard FAQ</td>
           <td class="winner">1-Month Full Warranty</td>
         </tr>
       </tbody>
@@ -760,38 +858,58 @@ def render_gemini_bridge_html(
 
     <div class="faq-item" onclick="toggleFaq(this)">
       <div class="faq-q">
-        <span>Is this activated on my own email?</span>
+        <span>Is this activated on my own email or a shared login?</span>
         <span class="faq-toggle">+</span>
       </div>
       <div class="faq-a">
-        Yes! You receive a direct official Redeem Code link. You open it in Chrome and activate it on your own Google account. No passwords or family invite requests needed.
+        It is activated directly on YOUR personal Google email account. You receive an official Google Redeem Code link, open it in Chrome, and activate it yourself. No passwords, no credentials, and no shared logins.
       </div>
     </div>
 
     <div class="faq-item" onclick="toggleFaq(this)">
       <div class="faq-q">
-        <span>What warranty do you provide?</span>
+        <span>Do I need to share my Google password?</span>
         <span class="faq-toggle">+</span>
       </div>
       <div class="faq-a">
-        We provide a 1-Month Full Replacement Warranty and dedicated customer support for your purchase.
+        Never! We strictly maintain a Zero-Password Policy. You activate the subscription yourself on Google's official page with a single click.
       </div>
     </div>
 
     <div class="faq-item" onclick="toggleFaq(this)">
       <div class="faq-q">
-        <span>What payment methods are supported?</span>
+        <span>What is your replacement warranty?</span>
         <span class="faq-toggle">+</span>
       </div>
       <div class="faq-a">
-        We support instant auto-verification for UPI (PhonePe, GPay, Paytm), Binance Pay, USDT (BEP20 / TRC20), and Store Wallet.
+        We provide a 1-Month Full Replacement Warranty. If you face any issues within 30 days of purchase, our 24/7 Telegram support team will resolve it or provide a replacement link immediately.
+      </div>
+    </div>
+
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-q">
+        <span>Which payment methods are accepted?</span>
+        <span class="faq-toggle">+</span>
+      </div>
+      <div class="faq-a">
+        Our bot supports instant automated verification for UPI (PhonePe, Google Pay, Paytm, BHIM, QR scan), Binance Pay, USDT (BEP20 / TRC20), and Store Wallet balance.
+      </div>
+    </div>
+
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-q">
+        <span>How long does delivery take?</span>
+        <span class="faq-toggle">+</span>
+      </div>
+      <div class="faq-a">
+        Delivery is 100% automated by our Telegram bot (@PrimeHubUs_Bot). As soon as your UPI or Crypto payment is verified, your redeem link is delivered within 30 to 60 seconds.
       </div>
     </div>
 
     <!-- Footer -->
     <div class="footer">
-      <p>© {settings.STORE_NAME}. All rights reserved.</p>
-      <p>Secure automated delivery powered by Team Prime Hub on Telegram.</p>
+      <p>&copy; {settings.STORE_NAME}. All rights reserved.</p>
+      <p>Official automated delivery powered by Team Prime Hub on Telegram.</p>
     </div>
 
   </div>
@@ -804,7 +922,7 @@ def render_gemini_bridge_html(
           <span class="sticky-price">₹199</span>
           <span class="sticky-strike">₹35,999</span>
         </div>
-        <span class="sticky-sub">5TB on Personal Email</span>
+        <span class="sticky-sub">18M &bull; 5TB on Your Email</span>
       </div>
       <button class="sticky-cta-btn" onclick="openTelegramBot(event)">
         Claim on Telegram ⚡
