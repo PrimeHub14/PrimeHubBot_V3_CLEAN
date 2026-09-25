@@ -78,9 +78,10 @@ async def product_stock_map(session, products) -> dict[int, int]:
             local_counts = await repo.available_stock_counts(session, local_product_ids)
         except Exception:
             local_counts = {}
+        prod_by_id = {p.id: p for p in products}
         for pid in local_product_ids:
             local = local_counts.get(pid, 0)
-            result[pid] = await live_stock(pid, local)
+            result[pid] = await live_stock(pid, local, product=prod_by_id.get(pid))
     return result
 
 def format_order_time(value) -> str:
@@ -172,13 +173,15 @@ async def shop(call: CallbackQuery):
     async with SessionLocal() as session:
         categories = await repo.list_categories(session)
         stock_totals, all_stock = await repo.category_stock_totals(session)
-        supplier_product = await repo.get_product(session, settings.LOOTPAGLU_PRODUCT_ID) if settings.LOOTPAGLU_PRODUCT_ID else None
-        if supplier_product and supplier_product.active and is_paglu_product(supplier_product.id):
-            local_supplier_stock = await repo.available_stock_count(session, supplier_product.id)
-            api_supplier_stock = await product_available_stock(session, supplier_product)
-            delta = api_supplier_stock - local_supplier_stock
-            stock_totals[supplier_product.category] = max(0, int(stock_totals.get(supplier_product.category, 0)) + delta)
-            all_stock = max(0, int(all_stock) + delta)
+        all_prods = await repo.list_products(session)
+        for p in all_prods:
+            if p.active and is_paglu_product(p.id, p):
+                local_supplier_stock = await repo.available_stock_count(session, p.id)
+                tot_supplier_stock = await live_stock(p.id, local_supplier_stock, product=p)
+                delta = tot_supplier_stock - local_supplier_stock
+                if delta > 0:
+                    stock_totals[p.category] = max(0, int(stock_totals.get(p.category, 0)) + delta)
+                    all_stock = max(0, int(all_stock) + delta)
 
         from app.services.ventebot import ventebot_client, get_ventebot_target_id
         if ventebot_client.is_configured():

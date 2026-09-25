@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import repo
 from app.db.models import Order, Product, StockItem
 from app.config import settings
-from app.services.loot_paglu import LootPagluClient, LootPagluError, is_paglu_product
+from app.services.loot_paglu import LootPagluClient, LootPagluError, is_paglu_product, get_paglu_service_id_for_product
 from app.services.admin_notifications import notify_admins_new_sale
 from app.db.repo import (
     allocate_stock_items,
@@ -145,7 +145,10 @@ async def _deliver_paglu_order(bot: Bot, session: AsyncSession, order: Order) ->
             )
 
         client = LootPagluClient()
-        live = await client.stock()
+        service_id = get_paglu_service_id_for_product(order.product_id, order.product)
+        if not service_id:
+            raise RuntimeError(f"Product #{order.product_id} is not linked to any Paglu service ID")
+        live = await client.stock(service_id=service_id)
         if live < quantity:
             raise RuntimeError(f"Not enough supplier stock is available. Only {live} item(s) remain.")
 
@@ -154,7 +157,7 @@ async def _deliver_paglu_order(bot: Bot, session: AsyncSession, order: Order) ->
         await session.commit()
 
         try:
-            result = await client.order(quantity)
+            result = await client.order(quantity, service_id=service_id)
         except LootPagluError as exc:
             # Known HTTP/API failures mean the purchase was rejected and can be
             # retried later after the problem is corrected. Connection errors are
@@ -179,7 +182,7 @@ async def _deliver_paglu_order(bot: Bot, session: AsyncSession, order: Order) ->
             order.user_id,
             delivery_header(order)
             + "\n\n📁 <b>Bulk delivery ready</b>\n"
-            + f"Your {len(text_items)} Gemini delivery item(s) are attached below as <b>TXT</b> and <b>CSV</b> files."
+            + f"Your {len(text_items)} delivery item(s) for <b>{escape(order.product.name if order.product else 'your order')}</b> are attached below as <b>TXT</b> and <b>CSV</b> files."
             + note_block(order)
             + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.",
             parse_mode="HTML",
@@ -347,7 +350,7 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
         await _deliver_ventebot_order(bot, session, order, v_target_id)
         return
 
-    if is_paglu_product(product.id):
+    if is_paglu_product(product.id, product):
         quantity = max(1, int(order.quantity or 1))
         # 1. SMART FALLBACK: If we have our own local stock, sell our own stock first! (100% pure profit)
         local_available = await repo.available_stock_count(session, product.id)

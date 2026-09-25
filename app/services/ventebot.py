@@ -220,10 +220,10 @@ async def get_effective_product_stock(session, product, force_refresh: bool = Fa
     # 2. LootPaglu mapped product
     try:
         from app.services.loot_paglu import is_paglu_product, live_stock
-        if is_paglu_product(product.id):
+        if is_paglu_product(product.id, product):
             from app.db import repo
             local = await repo.available_stock_count(session, product.id)
-            return await live_stock(product.id, local)
+            return await live_stock(product.id, local, product=product)
     except Exception:
         pass
 

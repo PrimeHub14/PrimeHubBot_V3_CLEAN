@@ -309,7 +309,7 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
     """
     quantity = max(1, int(quantity))
     from app.services.loot_paglu import is_paglu_product
-    is_supplier_product = is_paglu_product(product.id)
+    is_supplier_product = is_paglu_product(product.id, product)
     is_ventebot_product = bool(
         getattr(product, "ventebot_product_id", None)
         or (

@@ -31,6 +31,7 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_note TEXT DEFAULT '' NOT NULL"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_mode VARCHAR(20) DEFAULT 'instant' NOT NULL"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS ventebot_product_id INTEGER"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS paglu_service_id VARCHAR(50)"))
         # Safely deactivate/remove Vente Services products so only curated custom products appear
         try:
             await conn.execute(text("UPDATE products SET active = FALSE WHERE category = 'Vente Services'"))

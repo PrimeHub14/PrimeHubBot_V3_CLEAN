@@ -138,10 +138,12 @@ async def admin(message: Message):
         "/venteunlink PRIMEHUB_ID - Unlink product\n"
         "/venteme - Check VenteBot balance & status\n\n"
         "🤖 <b>Paglu Shop Bot Integration:</b>\n"
-        "/paglustatus - Smart Fallback status & stock breakdown\n"
-        "/pagluunlink - Disconnect Paglu bot (use own stock only)\n"
-        "/paglulink [ID] - Connect/re-link Paglu bot\n"
-        "/paglutest - Test Paglu API connectivity",
+        "/paglustatus - Smart Fallback status & all linked products\n"
+        "/paglulist - Browse all Paglu services, stock & wholesale rates\n"
+        "/paglulink auto - Auto-link Adobe, Apple Music, Spotify, Gemini\n"
+        "/paglulink PRIMEHUB_ID SERVICE_ID - Connect product manually\n"
+        "/pagluunlink [PRIMEHUB_ID] - Disconnect Paglu bot\n"
+        "/paglutest - Test Paglu API connectivity & wallet balance",
         parse_mode="HTML",
     )
 
@@ -355,76 +357,217 @@ async def add_is_file(message: Message, state: FSMContext):
 async def paglu_status_command(message: Message):
     if not admin_only(message):
         return
+
     from app.services.loot_paglu import (
         is_paglu_enabled,
-        get_paglu_product_id,
-        get_paglu_service_id,
+        get_paglu_service_id_for_product,
         LootPagluClient,
     )
 
-    target_pid = get_paglu_product_id()
-    target_sid = get_paglu_service_id()
     is_enabled = is_paglu_enabled()
-
-    lines = ["🤖 <b>Paglu Shop Bot Integration Status</b>\n━━━━━━━━━━━━━━━━━━━━━━"]
     status_icon = "🟢 ACTIVE" if is_enabled else "⚪ UNLINKED / DISABLED"
-    lines.append(f"• <b>Connection Status:</b> {status_icon}")
-    lines.append(f"• <b>Mapped Product ID:</b> <code>#{target_pid}</code>")
-    lines.append(f"• <b>Paglu Service ID:</b> <code>{target_sid}</code>")
-    lines.append("• <b>Mode:</b> 🚀 <b>Smart Fallback</b> (Own Stock First ➔ Paglu Supplier Fallback)\n")
 
-    async with SessionLocal() as session:
-        product = await repo.get_product(session, target_pid) if target_pid else None
-        prod_name = product.name if product else "Unknown"
-        local_stock = await repo.available_stock_count(session, target_pid) if target_pid else 0
+    lines = [
+        "🤖 <b>Paglu Shop Bot Integration Status</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"• <b>Connection Status:</b> {status_icon}",
+        "• <b>Mode:</b> 🚀 <b>Smart Fallback</b> (Own Stock First ➔ Paglu Supplier Fallback)",
+    ]
 
-    lines.append(f"📦 <b>Target:</b> {escape(prod_name)} (<code>#{target_pid}</code>)")
-    lines.append(f"🏠 <b>Your Own Stock:</b> <b>{local_stock} units</b> <i>(Sold first at 100% pure profit!)</i>")
-
-    supplier_stock = 0
-    wallet_inr = "N/A"
-    api_reachable = False
+    client = LootPagluClient()
+    wallet_info = "N/A"
+    services_map: dict[str, dict] = {}
     if is_enabled:
         try:
-            client = LootPagluClient()
             me = await client.me()
-            service = await client.service(target_sid)
-            wallet_inr = f"₹{me.get('wallet_inr', 0)}"
-            supplier_stock = max(0, int(service.get("available_stock") or 0)) if service else 0
-            api_reachable = True
+            wallet_info = f"₹{me.get('wallet_inr', 0)} INR | {me.get('wallet_crypto', 0)} Crypto"
+            for s in await client.products():
+                if isinstance(s, dict) and s.get("service_id"):
+                    services_map[str(s.get("service_id")).strip().lower()] = s
         except Exception as exc:
-            lines.append(f"⚠️ <i>Supplier API notice: {escape(str(exc))}</i>")
+            lines.append(f"⚠️ <i>Paglu API notice: {escape(str(exc))}</i>")
 
-    if api_reachable:
-        lines.append(f"🌐 <b>Paglu Supplier Stock:</b> <b>{supplier_stock} units</b> <i>(Used automatically when own stock is 0)</i>")
-        lines.append(f"🛒 <b>Total Available to Customers:</b> <b>{local_stock + supplier_stock} units</b>")
-        lines.append(f"💰 <b>Paglu Wallet Balance:</b> <b>{wallet_inr}</b>")
-    else:
-        lines.append(f"🛒 <b>Total Available to Customers:</b> <b>{local_stock} units</b> (Local Only)")
+    lines.append(f"• <b>Paglu Wallet Balance:</b> <b>{wallet_info}</b>\n")
 
-    lines.append("\n━━━━━━━━━━━━━━━━━━━━━━\n💡 <b>Commands:</b>")
-    if is_enabled:
-        lines.append("• <code>/pagluunlink</code> — Disconnect Paglu bot (use ONLY your own stock)")
+    async with SessionLocal() as session:
+        products = await repo.list_products(session, only_active=False)
+
+        linked_products = []
+        unlinked_candidates = []
+        for p in products:
+            sid = get_paglu_service_id_for_product(p.id, p)
+            if sid:
+                local_stk = await repo.available_stock_count(session, p.id)
+                supp_stk = 0
+                s_obj = services_map.get(sid.lower())
+                if s_obj:
+                    supp_stk = max(0, int(s_obj.get("available_stock") or 0))
+                else:
+                    try:
+                        supp_stk = await client.stock(sid)
+                    except Exception:
+                        supp_stk = 0
+                tot = local_stk + supp_stk
+                linked_products.append((p, sid, local_stk, supp_stk, tot, s_obj))
+            else:
+                p_name_lower = p.name.lower()
+                if any(kw in p_name_lower for kw in ["adobe", "apple", "spotify", "gemini", "duolingo", "meesho"]):
+                    unlinked_candidates.append(p)
+
+    if linked_products:
+        lines.append("📦 <b>Linked Products:</b>")
+        for p, sid, local_stk, supp_stk, tot, s_obj in linked_products:
+            p_name = escape(p.name)
+            s_name = escape(str(s_obj.get("name") if s_obj else sid))
+            lines.append(
+                f"• <b>#{p.id} {p_name}</b> (${float(p.price):.2f})\n"
+                f"   🔗 Service: <code>{sid}</code> ({s_name})\n"
+                f"   📊 Own Stock: <b>{local_stk}</b> | Paglu: <b>{supp_stk}</b> (Total: <b>{tot}</b>)"
+            )
     else:
-        lines.append(f"• <code>/paglulink {target_pid or 6}</code> — Re-enable Paglu Smart Fallback")
-    lines.append(f"• <code>/addstock {target_pid or 6}</code> — Add your own accounts/keys")
-    lines.append("• <code>/paglutest</code> — Run full Paglu API test")
+        lines.append("⚠️ <i>No products are currently linked to Paglu services.</i>")
+
+    if unlinked_candidates:
+        lines.append("\n💡 <b>Unlinked Products Found in Your Store:</b>")
+        for up in unlinked_candidates:
+            lines.append(f"• <b>#{up.id} {escape(up.name)}</b> — Run <code>/paglulink auto</code> to link automatically!")
+
+    lines.append("\n━━━━━━━━━━━━━━━━━━━━━━\n💡 <b>Helpful Commands:</b>")
+    lines.append("• <code>/paglulist</code> — View all available Paglu products, live stock & wholesale rates")
+    lines.append("• <code>/paglulink auto</code> — Auto-detect & link Adobe, Apple Music, Spotify, Gemini")
+    lines.append("• <code>/paglulink PRIMEHUB_ID SERVICE_ID</code> — Link specific product")
+    lines.append("• <code>/pagluunlink [PRIMEHUB_ID]</code> — Unlink product")
+    lines.append("• <code>/paglutest</code> — Test Paglu API connectivity")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("paglulist"))
+async def paglu_list_command(message: Message):
+    if not admin_only(message):
+        return
+
+    from app.services.loot_paglu import LootPagluClient, LootPagluError
+
+    client = LootPagluClient()
+    try:
+        services = await client.products(force_refresh=True)
+        me = await client.me()
+    except LootPagluError as exc:
+        await message.answer(
+            f"❌ <b>Paglu API Connection Error:</b>\n<code>{escape(str(exc))}</code>\n\n"
+            f"💡 Make sure <code>LOOTPAGLU_BASE_URL</code> and <code>LOOTPAGLU_API_KEY</code> are configured in Railway.",
+            parse_mode="HTML",
+        )
+        return
+    except Exception as exc:
+        await message.answer(f"❌ Failed to fetch Paglu services: {escape(str(exc))}")
+        return
+
+    if not services:
+        await message.answer("⚠️ No services returned by Paglu API. Please check your supplier bot setup.")
+        return
+
+    lines = [
+        "🌐 <b>Paglu Shop Bot — Available Catalogue</b>\n"
+        f"💰 Wallet: <b>₹{me.get('wallet_inr', 0)} INR</b> | <b>{me.get('wallet_crypto', 0)} Crypto</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━"
+    ]
+
+    async with SessionLocal() as session:
+        primehub_prods = await repo.list_products(session, only_active=False)
+
+    for idx, s in enumerate(services, start=1):
+        s_id = s.get("service_id", "N/A")
+        s_name = s.get("name", "Unknown")
+        stock = s.get("available_stock", 0)
+        slots = s.get("slots") or []
+        price_str = ""
+        if slots and isinstance(slots, list):
+            first_slot = slots[0]
+            upi_p = first_slot.get("upiPrice")
+            cry_p = first_slot.get("cryptoPrice")
+            price_str = f"₹{upi_p} / {cry_p} USDT"
+
+        stk_badge = f"🟢 <b>{stock} in stock</b>" if int(stock) > 0 else "🔴 <i>Out of stock</i>"
+
+        matched = next(
+            (p for p in primehub_prods if getattr(p, "paglu_service_id", None) == s_id or (s_id == "Paglu_1" and "gemini" in p.name.lower())),
+            None,
+        )
+        match_info = f"✅ Linked to <b>#{matched.id} {escape(matched.name)}</b>" if matched else "⚪ <i>Not linked</i>"
+
+        lines.append(
+            f"<b>{idx}. {escape(str(s_name))}</b>\n"
+            f"   • Service ID: <code>{s_id}</code>\n"
+            f"   • Live Stock: {stk_badge}\n"
+            + (f"   • Wholesale: <b>{price_str}</b>\n" if price_str else "")
+            + f"   • Status: {match_info}"
+        )
+
+    lines.append("\n━━━━━━━━━━━━━━━━━━━━━━\n👉 <b>How to Link:</b>")
+    lines.append("• <code>/paglulink auto</code> — Auto-link matching products (Adobe, Apple Music, Spotify, Gemini)")
+    lines.append("• <code>/paglulink PRIMEHUB_ID SERVICE_ID</code> — Link manually (e.g. <code>/paglulink 7 Paglu_2</code>)")
+
+    full_text = "\n".join(lines)
+    if len(full_text) <= 4000:
+        await message.answer(full_text, parse_mode="HTML")
+    else:
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) + 1 > 3800:
+                await message.answer(chunk, parse_mode="HTML")
+                chunk = line + "\n"
+            else:
+                chunk += line + "\n"
+        if chunk:
+            await message.answer(chunk, parse_mode="HTML")
 
 
 @router.message(Command("pagluunlink"))
 async def paglu_unlink_command(message: Message):
     if not admin_only(message):
         return
-    from app.services.loot_paglu import set_paglu_enabled, get_paglu_product_id
-    set_paglu_enabled(False)
-    target_pid = get_paglu_product_id()
+
+    from app.services.loot_paglu import set_product_paglu_service, set_paglu_enabled
+
+    parts = (message.text or "").split()
+
+    if len(parts) >= 2 and parts[1].isdigit():
+        pid = int(parts[1])
+        async with SessionLocal() as session:
+            product = await repo.get_product(session, pid)
+            if not product:
+                await message.answer(f"❌ Product #{pid} not found.")
+                return
+            product.paglu_service_id = None
+            set_product_paglu_service(pid, None)
+            await session.commit()
+            p_name = product.name
+        await message.answer(
+            f"🔌 <b>Product Unlinked!</b>\n\n"
+            f"Product <b>#{pid} {escape(p_name)}</b> is now disconnected from Paglu shop bot.\n"
+            f"It will now only use your own uploaded stock from <code>/addstock {pid}</code>.",
+            parse_mode="HTML",
+        )
+        return
+
+    if len(parts) >= 2 and parts[1].lower() == "all":
+        set_paglu_enabled(False)
+        async with SessionLocal() as session:
+            products = await repo.list_products(session, only_active=False)
+            for p in products:
+                p.paglu_service_id = None
+                set_product_paglu_service(p.id, None)
+            await session.commit()
+        await message.answer("🔌 <b>All products have been disconnected from Paglu Shop Bot.</b>", parse_mode="HTML")
+        return
+
     await message.answer(
-        "🔌 <b>Paglu Shop Bot Unlinked!</b>\n\n"
-        "Your bot is now disconnected from Paglu shop bot.\n"
-        f"Product <code>#{target_pid}</code> (Gemini) will now <b>ONLY</b> use your own uploaded stock from <code>/addstock</code>.\n\n"
-        f"💡 <i>To re-link anytime, send: <code>/paglulink {target_pid}</code></i>",
+        "Usage:\n"
+        "• <code>/pagluunlink PRODUCT_ID</code> — Unlink a specific product\n"
+        "• <code>/pagluunlink all</code> — Disconnect all products from Paglu\n\n"
+        "Tip: Check linked products with <code>/paglustatus</code>.",
         parse_mode="HTML",
     )
 
@@ -433,29 +576,146 @@ async def paglu_unlink_command(message: Message):
 async def paglu_link_command(message: Message):
     if not admin_only(message):
         return
+
     from app.services.loot_paglu import (
         set_paglu_enabled,
-        set_paglu_product_id,
-        set_paglu_service_id,
-        get_paglu_product_id,
-        get_paglu_service_id,
+        set_product_paglu_service,
+        LootPagluClient,
     )
-    parts = (message.text or "").split()
-    pid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else (get_paglu_product_id() or 6)
-    sid = parts[2].strip() if len(parts) > 2 else (get_paglu_service_id() or "Paglu_1")
 
     set_paglu_enabled(True)
-    set_paglu_product_id(pid)
-    set_paglu_service_id(sid)
+    parts = (message.text or "").split()
 
+    # Case 1: Auto link
+    if len(parts) == 2 and parts[1].lower() in {"auto", "all"}:
+        client = LootPagluClient()
+        try:
+            services = await client.products(force_refresh=True)
+        except Exception as exc:
+            await message.answer(f"❌ Failed to reach Paglu API: {escape(str(exc))}")
+            return
+
+        if not services:
+            await message.answer("⚠️ No Paglu services available to link.")
+            return
+
+        linked_count = 0
+        report = ["🚀 <b>Auto-Linking Prime Hub Products to Paglu Shop Bot:</b>\n"]
+
+        # Map keyword patterns to services
+        keyword_map = [
+            (["adobe", "express"], "Adobe Express"),
+            (["apple", "music"], "Apple Music"),
+            (["spotify"], "Spotify"),
+            (["gemini"], "Gemini"),
+            (["duolingo"], "Duolingo"),
+            (["meesho"], "Meesho"),
+        ]
+
+        async with SessionLocal() as session:
+            products = await repo.list_products(session, only_active=False)
+
+            for keywords, label in keyword_map:
+                # Find matching product in Prime Hub
+                matched_p = next(
+                    (p for p in products if any(kw in p.name.lower() for kw in keywords)),
+                    None,
+                )
+                if not matched_p:
+                    continue
+
+                # Find matching service in Paglu
+                matched_s = next(
+                    (s for s in services if any(kw in str(s.get("name", "")).lower() for kw in keywords)),
+                    None,
+                )
+                if not matched_s:
+                    continue
+
+                sid = str(matched_s.get("service_id") or "").strip()
+                if not sid:
+                    continue
+
+                matched_p.paglu_service_id = sid
+                set_product_paglu_service(matched_p.id, sid)
+                linked_count += 1
+                stock = matched_s.get("available_stock", 0)
+                report.append(
+                    f"✅ <b>{escape(matched_p.name)}</b> (ID <code>#{matched_p.id}</code>)\n"
+                    f"   ➔ Linked to: <code>{sid}</code> ({escape(str(matched_s.get('name', '')))} | {stock} in stock)\n"
+                )
+
+            await session.commit()
+
+        if linked_count > 0:
+            report.append(f"🎉 <b>Successfully linked {linked_count} product(s)!</b>")
+            report.append("Smart Fallback is active: your local stock sells first, then Paglu bot delivers automatically.")
+            report.append("\n💡 <i>View status anytime with <code>/paglustatus</code></i>")
+            await message.answer("\n".join(report), parse_mode="HTML")
+        else:
+            await message.answer(
+                "⚠️ No automatic keyword matches found.\n"
+                "Please use manual linking:\n"
+                "<code>/paglulink PRIMEHUB_ID SERVICE_ID</code>\n"
+                "Tip: Run <code>/paglulist</code> to view all Service IDs.",
+                parse_mode="HTML",
+            )
+        return
+
+    # Case 2: Manual link: /paglulink PRODUCT_ID SERVICE_ID
+    if len(parts) >= 3 and parts[1].isdigit():
+        pid = int(parts[1])
+        sid = parts[2].strip()
+
+        async with SessionLocal() as session:
+            product = await repo.get_product(session, pid)
+            if not product:
+                await message.answer(f"❌ Product #{pid} not found in your store.")
+                return
+
+            product.paglu_service_id = sid
+            set_product_paglu_service(pid, sid)
+            await session.commit()
+            prod_name = product.name
+            local_stock = await repo.available_stock_count(session, pid)
+
+        # Check stock from Paglu
+        client = LootPagluClient()
+        supp_stock = 0
+        s_name = sid
+        try:
+            s_obj = await client.service(sid)
+            if s_obj:
+                supp_stock = max(0, int(s_obj.get("available_stock") or 0))
+                s_name = s_obj.get("name") or sid
+        except Exception:
+            pass
+
+        await message.answer(
+            f"✅ <b>Paglu Shop Bot Successfully Linked!</b>\n\n"
+            f"📦 <b>Prime Hub Product:</b> <b>{escape(prod_name)}</b> (<code>#{pid}</code>)\n"
+            f"🔗 <b>Paglu Service:</b> <code>{sid}</code> ({escape(str(s_name))})\n"
+            f"📊 <b>Live Supplier Stock:</b> <b>{supp_stock} units</b>\n"
+            f"🏠 <b>Your Local Stock:</b> <b>{local_stock} units</b>\n"
+            f"🛒 <b>Total Available to Customers:</b> <b>{local_stock + supp_stock} units</b>\n\n"
+            f"⚡ <b>Smart Fallback Mode:</b> <b>ACTIVE</b>\n"
+            f"• If you add local stock (<code>/addstock {pid}</code>), customers get your stock first (100% pure profit!).\n"
+            f"• If your stock runs out, the bot automatically purchases from Paglu shop bot with zero downtime!\n\n"
+            f"💡 <i>Check status anytime with <code>/paglustatus</code></i>",
+            parse_mode="HTML",
+        )
+        return
+
+    # Case 3: Show usage
     await message.answer(
-        f"✅ <b>Paglu Shop Bot Linked!</b>\n\n"
-        f"📦 Mapped Product: <code>#{pid}</code>\n"
-        f"🌐 Service ID: <code>{sid}</code>\n"
-        f"⚡ <b>Smart Fallback Mode:</b> <b>ACTIVE</b>\n\n"
-        f"• If you have your own stock in <code>/stock {pid}</code>, customers receive your stock first (100% pure profit!).\n"
-        f"• If your stock runs out (0 units), the bot automatically purchases from Paglu shop bot so you never lose a sale!\n\n"
-        f"💡 <i>Check status anytime with <code>/paglustatus</code></i>",
+        "📋 <b>Paglu Shop Bot Linking:</b>\n\n"
+        "⚡ <b>Fastest Way (Auto Link):</b>\n"
+        "<code>/paglulink auto</code> — Automatically connects Adobe Express, Apple Music, Spotify, and Gemini!\n\n"
+        "✍️ <b>Manual Link:</b>\n"
+        "<code>/paglulink PRIMEHUB_ID SERVICE_ID</code>\n"
+        "<i>Example:</i> <code>/paglulink 7 Paglu_2</code>\n\n"
+        "💡 <i>Run <code>/paglulist</code> to view all available Paglu Service IDs and stock.</i>\n"
+        "💡 <i>Run <code>/listproducts</code> to view your Prime Hub product IDs.</i>",
         parse_mode="HTML",
     )
 
@@ -464,38 +724,31 @@ async def paglu_link_command(message: Message):
 async def paglu_test(message: Message):
     if not admin_only(message):
         return
+    from app.services.loot_paglu import LootPagluClient, LootPagluError
+    client = LootPagluClient()
     try:
-        client = LootPagluClient()
         me = await client.me()
-        service = await client.service()
+        services = await client.products(force_refresh=True)
     except LootPagluError as exc:
-        await message.answer(f"❌ Paglu API test failed:\n<code>{str(exc)}</code>", parse_mode="HTML")
+        await message.answer(f"❌ Paglu API test failed:\n<code>{escape(str(exc))}</code>", parse_mode="HTML")
+        return
+    except Exception as exc:
+        await message.answer(f"❌ Paglu API test connection error:\n<code>{escape(str(exc))}</code>", parse_mode="HTML")
         return
 
-    if not service:
-        await message.answer("⚠️ Paglu API is reachable, but the configured Gemini service ID was not found.")
-        return
+    lines = [
+        "✅ <b>Paglu API Connected Successfully!</b>\n",
+        f"• Base URL: <code>{client.base_url}</code>",
+        f"• INR Wallet: <b>₹{me.get('wallet_inr', 0)}</b>",
+        f"• Crypto Wallet: <b>{me.get('wallet_crypto', 0)}</b>",
+        f"• Total Services in Catalogue: <b>{len(services)}</b>\n",
+        "<b>Available Services Summary:</b>",
+    ]
+    for s in services[:8]:
+        lines.append(f"• <code>{s.get('service_id')}</code> — <b>{escape(str(s.get('name')))}</b> ({s.get('available_stock', 0)} in stock)")
 
-    slots = service.get("slots") or []
-    slot_lines = []
-    for slot in slots:
-        min_q = slot.get("min")
-        max_q = slot.get("max")
-        range_text = f"{min_q}+" if max_q is None else f"{min_q}-{max_q}"
-        slot_lines.append(
-            f"• {range_text}: ₹{slot.get('upiPrice')} / {slot.get('cryptoPrice')} crypto"
-        )
-
-    await message.answer(
-        "✅ <b>Paglu API Connected</b>\n\n"
-        f"Service: <b>{service.get('name')}</b>\n"
-        f"Service ID: <code>{service.get('service_id')}</code>\n"
-        f"Live stock: <b>{service.get('available_stock', 0)}</b>\n"
-        f"INR wallet: <b>₹{me.get('wallet_inr', 0)}</b>\n"
-        f"Crypto wallet: <b>{me.get('wallet_crypto', 0)}</b>\n\n"
-        + ("Supplier tiers:\n" + "\n".join(slot_lines) if slot_lines else ""),
-        parse_mode="HTML",
-    )
+    lines.append("\n💡 Run <code>/paglulink auto</code> to link your products!")
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 @router.message(Command("listproducts"))
 async def list_products(message: Message):
@@ -528,8 +781,8 @@ async def list_products(message: Message):
             else:
                 local_stk = await repo.available_stock_count(session, p.id)
                 from app.services.loot_paglu import is_paglu_product, live_stock
-                if is_paglu_product(p.id):
-                    total_stk = await live_stock(p.id, local_stk)
+                if is_paglu_product(p.id, p):
+                    total_stk = await live_stock(p.id, local_stk, product=p)
                     paglu_stk = max(0, total_stk - local_stk)
                     link_info = f"🤖 Paglu (Own: {local_stk} + Paglu: {paglu_stk} = {total_stk})"
                 else:
@@ -1300,9 +1553,9 @@ async def stock_status(message: Message):
                 return
             lines = ["📦 <b>All Product Stock</b>"]
             for product, available, reserved in rows:
-                available = await live_stock(product.id, available)
+                available = await live_stock(product.id, available, product=product)
                 mode = getattr(product, "delivery_mode", "instant")
-                source = "Paglu API" if is_paglu_product(product.id) else mode
+                source = "Paglu API" if is_paglu_product(product.id, product) else mode
                 status = "✅" if available > 0 else "❌"
                 lines.append(f"{status} #{product.id} {product.name} | ${float(product.price):.2f} | Available: {available} | {source}")
             await message.answer("\n".join(lines), parse_mode="HTML")
@@ -1316,7 +1569,7 @@ async def stock_status(message: Message):
             await message.answer("Product not found.")
             return
         local_available = await repo.available_stock_count(session, product_id)
-        available = await live_stock(product_id, local_available)
+        available = await live_stock(product_id, local_available, product=product)
     await message.answer(f"📦 <b>{product.name}</b>\nPrice: <b>${float(product.price):.2f}</b>\nAvailable stock: <b>{available}</b>\nDelivery: <b>{getattr(product, 'delivery_mode', 'instant')}</b>", parse_mode="HTML")
 
 
