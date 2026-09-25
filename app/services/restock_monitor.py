@@ -65,14 +65,24 @@ async def notify_subscribers_supplier_restock(
         except Exception:
             logger.info("Could not notify subscriber %s for product #%s", user_id, product.id)
 
-    # Notify store admins directly so they can manually post to channel/group if desired
+    # Notify store admins directly so they are aware, with a ready-to-copy clean template for channel/group
+    clean_channel_post = (
+        f"🔔 <b>NEW STOCK RESTOCK!</b>\n\n"
+        f"📦 <b>{safe_name}</b>\n"
+        f"➕ Fresh Stock Added: <b>+{added} units</b>\n"
+        f"✅ Available Now: <b>{available}</b>\n"
+        f"💵 Price: <b>${float(product.price):.2f} USD</b>\n\n"
+        f"⚡ <i>Instant automated delivery is available now! Open the bot to order.</i>"
+    )
     admin_notice = (
-        f"🔔 <b>[Supplier Restock Detected]</b>\n\n"
-        f"📦 <b>{safe_name}</b> (ID <code>#{product.id}</code>)\n"
-        f"🌐 Source: <b>{escape(supplier_name)}</b>\n"
-        f"➕ Added: <b>+{added} units</b> | Total Available: <b>{available}</b>\n"
-        f"👥 Notified {user_sent} subscriber(s) in bot DM.\n\n"
-        f"💡 <i>You can now copy and post this update to your Prime Hub channel manually.</i>"
+        f"🔒 <b>[ADMIN ONLY: Restock Report]</b>\n"
+        f"<i>(Note: Customers NEVER see this internal report)</i>\n\n"
+        f"📦 Product: <b>{safe_name}</b> (ID <code>#{product.id}</code>)\n"
+        f"🌐 Internal Supplier: <code>{escape(supplier_name)}</code>\n"
+        f"➕ Restock: <b>+{added} units</b> | Total Available: <b>{available}</b>\n"
+        f"👥 In-Bot Subscribers Notified: <b>{user_sent} user(s)</b>\n\n"
+        f"📋 <b>Tap to copy clean post for Channel/Group (zero supplier info):</b>\n"
+        f"<code>{escape(clean_channel_post)}</code>"
     )
     for admin_id in settings.admin_ids:
         try:
