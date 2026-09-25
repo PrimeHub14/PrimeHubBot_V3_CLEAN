@@ -65,18 +65,23 @@ def product_list_kb(products: list[Product], stock_counts: dict[int, int] | None
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def product_kb(product_id: int, available_stock: int = 0) -> InlineKeyboardMarkup:
+def product_kb(
+    product_id: int,
+    available_stock: int = 0,
+    category: str | None = None,
+) -> InlineKeyboardMarkup:
+    back_cb = f"cat:{category}" if category else "shop"
     if available_stock > 0:
         rows = [
             [InlineKeyboardButton(text="🛒 Choose Quantity", callback_data=f"quantity:{product_id}:1")],
             [InlineKeyboardButton(text="✅ Continue to Payment", callback_data=f"paymenu:{product_id}:1")],
-            [InlineKeyboardButton(text="📂 Back to Categories", callback_data="shop")],
+            [InlineKeyboardButton(text="◀️ Back", callback_data=back_cb)],
         ]
     else:
         rows = [
             [InlineKeyboardButton(text="❌ Out of Stock", callback_data="outofstock")],
             [InlineKeyboardButton(text="🔔 Notify Me When Restocked", callback_data=f"stocknotify:{product_id}")],
-            [InlineKeyboardButton(text="📂 Back to Categories", callback_data="shop")],
+            [InlineKeyboardButton(text="◀️ Back", callback_data=back_cb)],
         ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

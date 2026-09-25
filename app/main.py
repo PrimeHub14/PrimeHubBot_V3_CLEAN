@@ -33,6 +33,7 @@ from app.services.bsc_monitor import monitor_loop as bsc_monitor_loop
 from app.services.binance_monitor import monitor_loop as binance_monitor_loop
 from app.handlers.enterprise import scheduled_broadcast_worker
 from app.services.meta_lead_recovery import meta_lead_recovery_worker
+from app.services.restock_monitor import supplier_restock_monitor_loop
 
 logging.basicConfig(level=logging.INFO)
 
@@ -84,6 +85,7 @@ async def start_bot() -> None:
     binance_task = asyncio.create_task(binance_monitor_loop(bot))
     broadcast_task = asyncio.create_task(scheduled_broadcast_worker(bot))
     meta_recovery_task = asyncio.create_task(meta_lead_recovery_worker(bot))
+    restock_task = asyncio.create_task(supplier_restock_monitor_loop(bot))
 
     try:
         await dp.start_polling(bot)
@@ -94,6 +96,7 @@ async def start_bot() -> None:
         binance_task.cancel()
         broadcast_task.cancel()
         meta_recovery_task.cancel()
+        restock_task.cancel()
         await asyncio.gather(
             expiry_task,
             trc20_task,
@@ -101,6 +104,7 @@ async def start_bot() -> None:
             binance_task,
             broadcast_task,
             meta_recovery_task,
+            restock_task,
             return_exceptions=True,
         )
 

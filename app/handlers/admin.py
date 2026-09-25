@@ -143,7 +143,9 @@ async def admin(message: Message):
         "/paglulink auto - Auto-link Adobe, Apple Music, Spotify, Gemini\n"
         "/paglulink PRIMEHUB_ID SERVICE_ID - Connect product manually\n"
         "/pagluunlink [PRIMEHUB_ID] - Disconnect Paglu bot\n"
-        "/paglutest - Test Paglu API connectivity & wallet balance",
+        "/paglutest - Test Paglu API connectivity & wallet balance\n\n"
+        "🔄 <b>Supplier Stock Monitor (15-min auto):</b>\n"
+        "/checkrestock - Manually check Paglu & VenteBot for new stock & trigger alerts",
         parse_mode="HTML",
     )
 
@@ -2180,6 +2182,36 @@ async def vente_unlink_command(message: Message):
         product.ventebot_product_id = None
         await session.commit()
     await message.answer(f"✅ Product #{primehub_id} ({product.name}) unlinked from VenteBot.")
+
+
+@router.message(Command("checkrestock"))
+async def check_restock_command(message: Message):
+    if not admin_only(message):
+        return
+    await message.answer("⏳ <i>Checking supplier stock levels on Paglu Shop Bot and VenteBot...</i>", parse_mode="HTML")
+    from app.services.restock_monitor import check_supplier_restocks, _last_known_stock
+    try:
+        report = await check_supplier_restocks(message.bot)
+        tracked_count = len(_last_known_stock)
+        if report:
+            items_str = "\n".join(f"• {escape(r)}" for r in report)
+            await message.answer(
+                f"🎉 <b>New Stock Detected & Alerts Sent!</b>\n\n"
+                f"{items_str}\n\n"
+                f"📊 Currently monitoring {tracked_count} supplier product(s) every 15 minutes.",
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer(
+                f"✅ <b>Stock check complete.</b>\n\n"
+                f"No new supplier restocks detected at this time.\n"
+                f"📊 Currently tracking <b>{tracked_count}</b> linked supplier product(s).\n"
+                f"⏱️ Automated background check runs every <b>15 minutes</b>.",
+                parse_mode="HTML",
+            )
+    except Exception as exc:
+        await message.answer(f"❌ Error during restock check: <code>{escape(str(exc))}</code>", parse_mode="HTML")
+
 
 
 

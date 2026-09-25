@@ -353,7 +353,7 @@ async def show_product(call: CallbackQuery):
             available_stock = await product_available_stock(session, product)
 
         caption = product_caption(product, available_stock)
-        kb = product_kb(product.id, available_stock)
+        kb = product_kb(product.id, available_stock, category=product.category)
 
         chat_id = call.message.chat.id
         # Delete previous menu to keep the chat clean and compact
