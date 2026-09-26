@@ -264,6 +264,106 @@ def create_app(bot: Bot) -> web.Application:
     app.router.add_get("/", root_handler)
     app.router.add_post("/", root_handler)
 
+    async def ekqr_webhook(request: web.Request) -> web.Response:
+        """Receive instant automated UPI payment confirmations from EkQR / UPIGateway."""
+        data = {}
+        try:
+            if request.content_type == "application/json":
+                data = await request.json()
+            elif request.can_read_body:
+                raw_text = await request.text()
+                try:
+                    import json
+                    data = json.loads(raw_text)
+                except Exception:
+                    from urllib.parse import parse_qs
+                    data = {k: v[0] for k, v in parse_qs(raw_text).items()}
+        except Exception:
+            pass
+
+        if not data:
+            data = dict(request.query)
+
+        logger.info(f"EkQR webhook payload received: {data}")
+
+        status = str(data.get("status") or "").lower().strip()
+        client_txn_id = str(data.get("client_txn_id") or "").strip()
+        upi_txn_id = str(data.get("upi_txn_id") or data.get("utr") or "").strip()
+        raw_amt = str(data.get("amount") or "0").strip()
+
+        # Handle nested data dict if sent as {"status": true, "data": {...}}
+        if isinstance(data.get("data"), dict):
+            inner = data["data"]
+            if not client_txn_id:
+                client_txn_id = str(inner.get("client_txn_id") or "").strip()
+            if not upi_txn_id:
+                upi_txn_id = str(inner.get("upi_txn_id") or inner.get("utr") or "").strip()
+            if raw_amt == "0":
+                raw_amt = str(inner.get("amount") or "0").strip()
+            if not status or status == "true":
+                status = str(inner.get("status") or status).lower().strip()
+
+        if status not in {"success", "completed", "true"}:
+            return web.json_response({"status": "ignored", "reason": f"Status is {status}"}, status=200)
+
+        order_id = None
+        if client_txn_id.startswith("PRIME_"):
+            clean_id = client_txn_id.replace("PRIME_", "")
+            if clean_id.isdigit():
+                order_id = int(clean_id)
+        elif client_txn_id.isdigit():
+            order_id = int(client_txn_id)
+
+        if not order_id:
+            logger.warning(f"EkQR webhook: could not extract order ID from {client_txn_id}")
+            return web.json_response({"status": "error", "message": "Invalid client_txn_id"}, status=400)
+
+        async with SessionLocal() as session:
+            order = await repo.get_order_with_product(session, order_id)
+            if not order:
+                logger.warning(f"EkQR webhook: order #{order_id} not found")
+                return web.json_response({"status": "error", "message": "Order not found"}, status=404)
+
+            if order.delivered or order.status in {"delivered", "completed", "paid"}:
+                logger.info(f"EkQR webhook: order #{order_id} already delivered")
+                return web.json_response({"status": "already_delivered"}, status=200)
+
+            try:
+                amt_val = float(raw_amt)
+            except ValueError:
+                amt_val = float(order.amount)
+
+            record = await repo.record_incoming_upi(
+                session,
+                utr=upi_txn_id or f"EKQR_{client_txn_id}",
+                amount=amt_val,
+                sender=str(data.get("customer_name") or "EkQR Customer"),
+                raw_text=str(data),
+            )
+            await repo.claim_upi_payment(session, record, order)
+
+            if order.payment_message_chat_id and order.payment_message_id:
+                try:
+                    await bot.edit_message_caption(
+                        chat_id=order.payment_message_chat_id,
+                        message_id=order.payment_message_id,
+                        caption=(
+                            f"✅ <b>UPI Payment Confirmed!</b>\n\n"
+                            f"🧾 Order ID: <code>#{order.id}</code>\n"
+                            f"UTR / Ref: <code>{upi_txn_id}</code>\n"
+                            f"💵 Amount: <b>₹{amt_val:,.2f}</b>\n\n"
+                            f"⚡ <i>Delivering your purchase below...</i>"
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+            await deliver_order(bot, session, order)
+            logger.info(f"EkQR webhook: Successfully auto-delivered Order #{order.id} (UTR: {upi_txn_id})")
+
+        return web.json_response({"status": "success", "order_id": order_id})
+
     # Register all path aliases so any URL works
     for path in (
         "/webhook/phonepe",
@@ -275,5 +375,13 @@ def create_app(bot: Bot) -> web.Application:
     ):
         app.router.add_get(path, phonepe_webhook)
         app.router.add_post(path, phonepe_webhook)
+
+    for path in (
+        "/webhook/ekqr",
+        "/ekqr",
+        "/ekqr-webhook",
+    ):
+        app.router.add_get(path, ekqr_webhook)
+        app.router.add_post(path, ekqr_webhook)
 
     return app

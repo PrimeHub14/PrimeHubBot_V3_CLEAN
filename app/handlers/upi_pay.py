@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.db import repo
 from app.db.session import SessionLocal
-from app.keyboards import upi_waiting_kb, main_menu_kb
+from app.keyboards import upi_waiting_kb, upi_status_kb, main_menu_kb
 from app.utils.security import is_admin
 from app.services.delivery import deliver_order
 from app.services.loot_paglu import live_stock
@@ -39,7 +39,8 @@ def compute_upi_inr(amount_usd: float, order_id: int = 0) -> int:
 @router.callback_query(F.data.startswith("directupi:"))
 async def direct_upi(call: CallbackQuery):
     await call.answer()
-    if not settings.UPI_ID:
+    from app.services.ekqr import ekqr_client
+    if not settings.UPI_ID and not ekqr_client.is_configured():
         await call.message.answer("UPI payment is not configured yet. Please choose another payment method.")
         return
 
@@ -85,13 +86,34 @@ async def direct_upi(call: CallbackQuery):
     inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
     inr_amount = compute_upi_inr(float(order.amount), order.id)
     safe_name = escape(product.name or "")
+    payee_upi = settings.UPI_ID or "primehubus@axl"
+    payee_name = settings.UPI_NAME or "Abdullah"
 
-    upi_deep_link = (
-        f"upi://pay?pa={settings.UPI_ID}"
-        f"&pn={quote_plus(settings.UPI_NAME)}"
-        f"&am={inr_amount}&cu=INR"
-        f"&tn=Order_{order.id}"
-    )
+    # Try creating dynamic QR / order on EkQR
+    ekqr_data = None
+    pay_url = None
+    upi_deep_link = None
+
+    if ekqr_client.is_configured():
+        cust_name = call.from_user.first_name if call.from_user else "Customer"
+        ekqr_data = await ekqr_client.create_order(
+            order_id=order.id,
+            amount_inr=inr_amount,
+            product_name=product.name,
+            customer_name=cust_name,
+        )
+        if ekqr_data:
+            pay_url = ekqr_data.get("payment_url")
+            intent = ekqr_data.get("upi_intent") or {}
+            upi_deep_link = intent.get("bhim_link")
+
+    if not upi_deep_link:
+        upi_deep_link = (
+            f"upi://pay?pa={payee_upi}"
+            f"&pn={quote_plus(payee_name)}"
+            f"&am={inr_amount}&cu=INR"
+            f"&tn=Order_{order.id}"
+        )
 
     caption = (
         "🇮🇳 <b>UPI Payment — Instant Auto Delivery</b>\n"
@@ -101,14 +123,14 @@ async def direct_upi(call: CallbackQuery):
         f"🔢 Quantity: <b>{quantity}</b>\n"
         f"💵 Total: <b>${float(order.amount):.2f} USD</b>\n"
         f"🇮🇳 Pay in INR: <b>₹{inr_amount:,}</b> <i>(@ ₹{inr_rate:.1f}/$)</i>\n\n"
-        f"UPI ID:\n<code>{settings.UPI_ID}</code>\n"
-        f"Payee Name: <b>{escape(settings.UPI_NAME)}</b>\n\n"
+        f"UPI ID:\n<code>{payee_upi}</code>\n"
+        f"Payee Name: <b>{escape(payee_name)}</b>\n\n"
         "⏳ Payment window: <b>15 minutes</b>\n\n"
         "🔍 <b>How to Pay & Receive Instantly:</b>\n"
-        "1. Scan the QR code above with <b>PhonePe, GPay, or Paytm</b>.\n"
+        "1. Tap <b>'📲 Tap to Pay'</b> below or scan the QR code with <b>PhonePe, GPay, or Paytm</b>.\n"
         f"2. Pay exactly <b>₹{inr_amount:,}</b>.\n"
-        "3. Tap <b>'✍️ Submit 12-Digit UTR'</b> below and enter your 12-digit UPI reference number.\n\n"
-        "⚡ <i>Your payment is verified against PhonePe and your product is delivered in seconds!</i>"
+        "3. Once paid, the bot auto-verifies your payment and delivers your product instantly!\n\n"
+        "⚡ <i>Instant automated delivery — zero waiting time!</i>"
     )
 
     await remove_previous_payment_message(call.bot, order)
@@ -120,7 +142,7 @@ async def direct_upi(call: CallbackQuery):
     except Exception:
         pass
 
-    kb = upi_waiting_kb(order.id)
+    kb = upi_waiting_kb(order.id, pay_url=pay_url)
     sent = None
     try:
         qr_file = make_address_qr(upi_deep_link)
@@ -149,6 +171,173 @@ async def direct_upi(call: CallbackQuery):
                 sent.message_id,
                 caption,
             )
+
+
+@router.callback_query(F.data.startswith("upipaid:"))
+async def upi_paid_clicked(call: CallbackQuery):
+    await call.answer()
+    order_id = int(call.data.split(":")[1])
+
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await call.message.answer("Order not found.")
+            return
+
+        if order.delivered or order.status in {"delivered", "completed", "paid"}:
+            await call.answer("✅ This order has already been verified and delivered!", show_alert=True)
+            return
+
+        expected_inr = compute_upi_inr(float(order.amount), order.id)
+
+        # 1. First, check with EkQR API directly if configured
+        from app.services.ekqr import ekqr_client
+        if ekqr_client.is_configured():
+            status_data = await ekqr_client.check_order_status(order_id=order.id)
+            if status_data and str(status_data.get("status", "")).lower() in {"success", "completed"}:
+                utr = str(status_data.get("upi_txn_id") or f"EKQR_{order.id}")
+                amt = float(status_data.get("amount") or expected_inr)
+                record = await repo.record_incoming_upi(
+                    session,
+                    utr=utr,
+                    amount=amt,
+                    sender=str(status_data.get("customer_name") or "EkQR Customer"),
+                    raw_text=str(status_data),
+                )
+                await repo.claim_upi_payment(session, record, order)
+                await call.answer("✅ Payment confirmed! Delivering your purchase...", show_alert=True)
+                if order.payment_message_chat_id and order.payment_message_id:
+                    try:
+                        await call.bot.edit_message_caption(
+                            chat_id=order.payment_message_chat_id,
+                            message_id=order.payment_message_id,
+                            caption=(
+                                f"✅ <b>UPI Payment Confirmed!</b>\n\n"
+                                f"🧾 Order ID: <code>#{order.id}</code>\n"
+                                f"UTR: <code>{utr}</code>\n"
+                                f"💵 Amount: <b>₹{amt:,.2f}</b>\n\n"
+                                f"⚡ <i>Delivering your purchase below...</i>"
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+                await deliver_order(call.bot, session, order)
+                return
+
+        # 2. Check local database for matched UTR
+        if order.payment_proof_value:
+            match = await repo.find_matching_upi_payment(session, order.payment_proof_value, expected_inr)
+            if match:
+                await repo.claim_upi_payment(session, match, order)
+                await call.answer("✅ Payment verified! Delivering your product...", show_alert=True)
+                if order.payment_message_chat_id and order.payment_message_id:
+                    try:
+                        await call.bot.edit_message_caption(
+                            chat_id=order.payment_message_chat_id,
+                            message_id=order.payment_message_id,
+                            caption=(
+                                f"✅ <b>UPI Payment Confirmed!</b>\n\n"
+                                f"🧾 Order ID: <code>#{order.id}</code>\n"
+                                f"UTR: <code>{order.payment_proof_value}</code>\n"
+                                f"💵 Amount: <b>₹{float(match.amount):,.2f}</b>\n\n"
+                                f"⚡ <i>Delivering your purchase below...</i>"
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+                await deliver_order(call.bot, session, order)
+                return
+
+        # 3. Not verified yet: Show the clean checking status view with Check Status and Submit UTR buttons!
+        safe_prod = escape(order.product.name if order.product else f"Order #{order.id}")
+        status_caption = (
+            f"⏳ <b>Payment Verification in Progress</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🧾 Order ID: <code>#{order.id}</code>\n"
+            f"📦 Product: <b>{safe_prod}</b>\n"
+            f"💵 Expected Amount: <b>₹{expected_inr:,}</b>\n\n"
+            "• Bank verification is currently in progress.\n"
+            "• If you just completed payment in your UPI app, please allow 5–10 seconds.\n"
+            "• Your product will deliver automatically here the second the bank confirms!\n\n"
+            "👉 Tap <b>'🔄 Check Status'</b> below to re-verify, or submit your 12-digit UTR:"
+        )
+
+        try:
+            await call.message.edit_caption(
+                caption=status_caption,
+                reply_markup=upi_status_kb(order.id),
+                parse_mode="HTML",
+            )
+        except Exception:
+            try:
+                await call.message.edit_text(
+                    text=status_caption,
+                    reply_markup=upi_status_kb(order.id),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+
+@router.callback_query(F.data.startswith("backtoupi:"))
+async def upi_back_to_payment(call: CallbackQuery):
+    await call.answer()
+    order_id = int(call.data.split(":")[1])
+
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await call.message.answer("Order not found.")
+            return
+
+        if order.delivered or order.status in {"delivered", "completed", "paid"}:
+            await call.answer("✅ This order has already been verified and delivered!", show_alert=True)
+            return
+
+        inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+        inr_amount = compute_upi_inr(float(order.amount), order.id)
+        safe_name = escape(order.product.name if order.product else "")
+        payee_upi = settings.UPI_ID or "primehubus@axl"
+        payee_name = settings.UPI_NAME or "Abdullah"
+        pay_url = order.invoice_url
+
+        caption = (
+            "🇮🇳 <b>UPI Payment — Instant Auto Delivery</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🧾 Order ID: <code>#{order.id}</code>\n"
+            f"📦 Product: <b>{safe_name}</b>\n"
+            f"🔢 Quantity: <b>{order.quantity or 1}</b>\n"
+            f"💵 Total: <b>${float(order.amount):.2f} USD</b>\n"
+            f"🇮🇳 Pay in INR: <b>₹{inr_amount:,}</b> <i>(@ ₹{inr_rate:.1f}/$)</i>\n\n"
+            f"UPI ID:\n<code>{payee_upi}</code>\n"
+            f"Payee Name: <b>{escape(payee_name)}</b>\n\n"
+            "⏳ Payment window: <b>15 minutes</b>\n\n"
+            "🔍 <b>How to Pay & Receive Instantly:</b>\n"
+            "1. Tap <b>'📲 Tap to Pay'</b> below or scan the QR code with <b>PhonePe, GPay, or Paytm</b>.\n"
+            f"2. Pay exactly <b>₹{inr_amount:,}</b>.\n"
+            "3. Once paid, the bot auto-verifies your payment and delivers your product instantly!\n\n"
+            "⚡ <i>Instant automated delivery — zero waiting time!</i>"
+        )
+
+        kb = upi_waiting_kb(order.id, pay_url=pay_url)
+
+        try:
+            await call.message.edit_caption(
+                caption=caption,
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+        except Exception:
+            try:
+                await call.message.edit_text(
+                    text=caption,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
 
 
 @router.callback_query(F.data.startswith("submitutr:"))
@@ -280,7 +469,42 @@ async def upi_check(call: CallbackQuery):
 
         expected_inr = compute_upi_inr(float(order.amount), order.id)
 
-        # If user previously typed a UTR, re-check it
+        # 1. First check with EkQR API directly if configured
+        from app.services.ekqr import ekqr_client
+        if ekqr_client.is_configured():
+            status_data = await ekqr_client.check_order_status(order_id=order.id)
+            if status_data and str(status_data.get("status", "")).lower() in {"success", "completed"}:
+                utr = str(status_data.get("upi_txn_id") or f"EKQR_{order.id}")
+                amt = float(status_data.get("amount") or expected_inr)
+                record = await repo.record_incoming_upi(
+                    session,
+                    utr=utr,
+                    amount=amt,
+                    sender=str(status_data.get("customer_name") or "EkQR Customer"),
+                    raw_text=str(status_data),
+                )
+                await repo.claim_upi_payment(session, record, order)
+                await call.answer("✅ Payment verified! Delivering your product...", show_alert=True)
+                if order.payment_message_chat_id and order.payment_message_id:
+                    try:
+                        await call.bot.edit_message_caption(
+                            chat_id=order.payment_message_chat_id,
+                            message_id=order.payment_message_id,
+                            caption=(
+                                f"✅ <b>UPI Payment Confirmed!</b>\n\n"
+                                f"🧾 Order ID: <code>#{order.id}</code>\n"
+                                f"UTR: <code>{utr}</code>\n"
+                                f"💵 Amount: <b>₹{amt:,.2f}</b>\n\n"
+                                f"⚡ <i>Delivering your purchase below...</i>"
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+                await deliver_order(call.bot, session, order)
+                return
+
+        # 2. If user previously typed a UTR, re-check database records
         if order.payment_proof_value:
             match = await repo.find_matching_upi_payment(session, order.payment_proof_value, expected_inr)
             if match:
@@ -309,8 +533,8 @@ async def upi_check(call: CallbackQuery):
                 return
 
         await call.answer(
-            "⏳ Payment not confirmed yet.\n\n"
-            "Please complete your payment and tap 'Submit 12-Digit UTR' to verify instantly.",
+            "⏳ Payment not detected yet.\n\n"
+            "If you have already paid, please wait a few seconds and tap 'Check Status' again, or tap 'Submit 12-Digit UTR'.",
             show_alert=True,
         )
 

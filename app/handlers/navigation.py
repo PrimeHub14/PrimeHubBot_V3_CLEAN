@@ -192,6 +192,75 @@ async def start_command(message: Message, state: FSMContext) -> None:
                     await message.answer(plain_caption, reply_markup=kb)
             return
 
+    # 2. Universal Product / Category Deep Link (e.g. ?start=p_12, ?start=chatgpt, ?start=spotify)
+    if payload and not payload.startswith("ref_"):
+        await state.clear()
+        await _register_user(message, source=payload)
+
+        matched_product = None
+        target_category = None
+
+        if payload.startswith("cat_"):
+            target_category = payload[4:].strip()
+
+        async with SessionLocal() as session:
+            pid = None
+            if payload.startswith("p_") and payload[2:].isdigit():
+                pid = int(payload[2:])
+            elif payload.startswith("prod_") and payload[5:].isdigit():
+                pid = int(payload[5:])
+            elif payload.isdigit():
+                pid = int(payload)
+
+            if pid:
+                p = await repo.get_product(session, pid)
+                if p and p.active:
+                    matched_product = p
+            elif not target_category:
+                clean_term = payload.replace("_", " ").replace("-", " ").strip()
+                candidates = await repo.search_products(session, clean_term, limit=10)
+                if candidates:
+                    matched_product = candidates[0]
+
+            if matched_product:
+                from app.handlers.user import product_available_stock, product_caption
+                available_stock = await product_available_stock(session, matched_product)
+                caption = product_caption(matched_product, available_stock)
+                kb = product_kb(matched_product.id, available_stock, category=matched_product.category)
+
+                sent = False
+                if matched_product.image_file_id:
+                    try:
+                        await message.answer_photo(
+                            photo=matched_product.image_file_id,
+                            caption=caption,
+                            reply_markup=kb,
+                            parse_mode="HTML",
+                        )
+                        sent = True
+                    except Exception as exc:
+                        logging.warning(f"Failed to send deep link photo for #{matched_product.id}: {exc}")
+
+                if not sent:
+                    await message.answer(
+                        text=caption,
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
+                return
+
+            if target_category:
+                from app.handlers.user import product_stock_map, product_list_kb
+                cat_products = await repo.list_products_by_category(session, target_category)
+                if cat_products:
+                    stock_counts = await product_stock_map(session, cat_products)
+                    await message.answer(
+                        f"📂 <b>{escape(target_category)}</b>",
+                        reply_markup=product_list_kb(cat_products, stock_counts),
+                        parse_mode="HTML",
+                    )
+                    return
+
     await _show_home(message, state)
 
 @router.message(Command("menu"))

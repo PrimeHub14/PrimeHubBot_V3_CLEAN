@@ -45,9 +45,13 @@ class Settings(BaseSettings):
     BINANCE_API_BASE_URL: str = "https://api.binance.com"
     BINANCE_PAYMENT_TIMEOUT_MINUTES: int = 30
     BINANCE_POLL_SECONDS: int = 15
-    UPI_ID: str = ""
-    UPI_NAME: str = "Prime Hub"
+    UPI_ID: str = "primehubus@axl"
+    UPI_NAME: str = "Abdullah"
     UPI_INR_PER_USD: float = 86.5
+
+    # EkQR Automated UPI Gateway integration
+    EKQR_API_KEY: str = "c043fa29-7273-4d7f-b569-6db66bf2f7db"
+    EKQR_BASE_URL: str = "https://api.ekqr.in"
 
     # VenteBot Reseller API integration
     VENTEBOT_BASE_URL: str = "https://ventetelegrambotrailway-production.up.railway.app"

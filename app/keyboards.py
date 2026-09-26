@@ -131,14 +131,26 @@ def payment_methods_kb(product_id: int, quantity: int = 1) -> InlineKeyboardMark
     ])
 
 
-def upi_waiting_kb(order_id: int) -> InlineKeyboardMarkup:
-    """Buttons shown under UPI auto-verification card."""
+def upi_waiting_kb(order_id: int, pay_url: str | None = None) -> InlineKeyboardMarkup:
+    """Clean compact buttons under UPI payment card."""
+    rows = []
+    if pay_url:
+        rows.append([InlineKeyboardButton(text="📲 Tap to Pay", url=pay_url)])
+    rows.extend([
+        [InlineKeyboardButton(text="🧾 I have paid - send proof", callback_data=f"upipaid:{order_id}")],
+        [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"cancelupi:{order_id}")],
+        [InlineKeyboardButton(text="🛟 Payment Help", callback_data="help:home")],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def upi_status_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Buttons shown when user taps 'I have paid - send proof'."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✍️ Submit 12-Digit UTR", callback_data=f"submitutr:{order_id}")],
             [InlineKeyboardButton(text="🔄 Check Status", callback_data=f"checkupi:{order_id}")],
-            [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"cancelupi:{order_id}")],
-            [InlineKeyboardButton(text="🛟 Payment Help", callback_data="help:home")],
+            [InlineKeyboardButton(text="✍️ Submit 12-Digit UTR", callback_data=f"submitutr:{order_id}")],
+            [InlineKeyboardButton(text="◀️ Back to Payment", callback_data=f"backtoupi:{order_id}")],
         ]
     )
 
