@@ -470,15 +470,21 @@ async def choose_quantity(call: CallbackQuery, state: FSMContext):
         except Exception:
             pass
 
+        # Activate waiting_quantity state immediately so customer can simply type any number in chat!
+        await state.clear()
+        await state.update_data(quantity_product_id=product_id)
+        await state.set_state(QuantityInputState.waiting_quantity)
+
         total = float(product.price) * quantity
         safe_name = escape(product.name or "")
         text = (
             f"🛒 <b>Select Quantity</b>\n\n"
-            f"📦 {safe_name}\n"
-            f"Price each: <b>${float(product.price):.2f}</b>\n"
-            f"Quantity: <b>{quantity}</b>\n"
-            f"Total: <b>${total:.2f}</b>\n\n"
-            f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
+            f"📦 <b>{safe_name}</b>\n"
+            f"💵 Price each: <b>${float(product.price):.2f}</b>\n"
+            f"🔢 Quantity: <b>{quantity}</b>\n"
+            f"💰 Total: <b>${total:.2f}</b>\n\n"
+            f"📦 Available stock: <b>{available_stock}</b>\n\n"
+            f"👉 <i>Use ➕ / ➖ below, or simply <b>type the quantity number</b> (e.g. <code>{min(5, available_stock)}</code>) directly in chat!</i>"
         )
         sent = await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
         await remember_checkout_menu(state, sent)
@@ -519,7 +525,7 @@ async def ask_typed_quantity(call: CallbackQuery, state: FSMContext):
             f"📦 {safe_name}\n"
             f"Available stock: <b>{available_stock}</b>\n\n"
             f"Send the quantity you want as a number.\n"
-            f"Example: <code>25</code>",
+            f"Example: <code>{min(5, available_stock)}</code>",
             parse_mode="HTML",
         )
     except Exception as exc:
@@ -532,7 +538,7 @@ async def receive_typed_quantity(message: Message, state: FSMContext):
     raw = (message.text or "").strip()
 
     if not raw.isdigit():
-        await message.answer("Please send only a whole number, for example: <code>25</code>", parse_mode="HTML")
+        await message.answer("Please send only a whole number, for example: <code>5</code>", parse_mode="HTML")
         return
 
     quantity = int(raw)
@@ -590,7 +596,7 @@ async def quantity_noop(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("qty:"))
-async def change_quantity(call: CallbackQuery):
+async def change_quantity(call: CallbackQuery, state: FSMContext):
     await call.answer()
     try:
         _, product_id_raw, quantity_raw, delta_raw = call.data.split(":")
@@ -608,26 +614,34 @@ async def change_quantity(call: CallbackQuery):
         if quantity > available_stock:
             await call.message.answer(f"Only {available_stock} item(s) are available.")
             return
+
+        # Keep state active so they can still type a number anytime!
+        await state.update_data(quantity_product_id=product_id)
+        await state.set_state(QuantityInputState.waiting_quantity)
+
         total = float(product.price) * quantity
         safe_name = escape(product.name or "")
         text = (
             f"🛒 <b>Select Quantity</b>\n\n"
-            f"📦 {safe_name}\n"
-            f"Price each: <b>${float(product.price):.2f}</b>\n"
-            f"Quantity: <b>{quantity}</b>\n"
-            f"Total: <b>${total:.2f}</b>\n\n"
-            f"Available stock: <b>{available_stock}</b>\nMaximum per order: <b>{available_stock}</b>"
+            f"📦 <b>{safe_name}</b>\n"
+            f"💵 Price each: <b>${float(product.price):.2f}</b>\n"
+            f"🔢 Quantity: <b>{quantity}</b>\n"
+            f"💰 Total: <b>${total:.2f}</b>\n\n"
+            f"📦 Available stock: <b>{available_stock}</b>\n\n"
+            f"👉 <i>Use ➕ / ➖ below, or simply <b>type the quantity number</b> (e.g. <code>{min(5, available_stock)}</code>) directly in chat!</i>"
         )
         try:
             await call.message.edit_text(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
         except Exception:
-            await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+            sent = await call.message.answer(text, reply_markup=quantity_kb(product_id, quantity), parse_mode="HTML")
+            await remember_checkout_menu(state, sent)
     except Exception as exc:
         logging.exception(f"Unhandled error in change_quantity: {exc}")
 
 
 @router.callback_query(F.data.startswith("paymenu:"))
 async def payment_menu(call: CallbackQuery, state: FSMContext):
+    await state.clear()
     await call.answer()
     try:
         parts = call.data.split(":")

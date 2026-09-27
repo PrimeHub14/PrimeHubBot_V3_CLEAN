@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     UPI_INR_PER_USD: float = 86.5
 
     # EkQR Automated UPI Gateway integration
-    EKQR_API_KEY: str = "c043fa29-7273-4d7f-b569-6db66bf2f7db"
+    EKQR_API_KEY: str = ""
     EKQR_BASE_URL: str = "https://api.ekqr.in"
 
     # VenteBot Reseller API integration

@@ -114,7 +114,6 @@ def quantity_kb(product_id: int, quantity: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=f"{quantity}", callback_data="qtynoop"),
             InlineKeyboardButton(text="➕", callback_data=f"qty:{product_id}:{quantity}:1"),
         ],
-        [InlineKeyboardButton(text="⌨️ Type Quantity", callback_data=f"typeqty:{product_id}")],
         [InlineKeyboardButton(text="✅ Continue to Payment", callback_data=f"paymenu:{product_id}:{quantity}")],
         [InlineKeyboardButton(text="⬅️ Back", callback_data=f"product:{product_id}")],
     ])
@@ -132,24 +131,22 @@ def payment_methods_kb(product_id: int, quantity: int = 1) -> InlineKeyboardMark
 
 
 def upi_waiting_kb(order_id: int, pay_url: str | None = None) -> InlineKeyboardMarkup:
-    """Clean compact buttons under UPI payment card."""
-    rows = []
-    if pay_url:
-        rows.append([InlineKeyboardButton(text="📲 Tap to Pay", url=pay_url)])
-    rows.extend([
-        [InlineKeyboardButton(text="🧾 I have paid - send proof", callback_data=f"upipaid:{order_id}")],
-        [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"cancelupi:{order_id}")],
-        [InlineKeyboardButton(text="🛟 Payment Help", callback_data="help:home")],
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    """Clean 3 compact buttons under UPI payment card (no Tap to Pay / no external links)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧾 I have paid - send proof", callback_data=f"upipaid:{order_id}")],
+            [InlineKeyboardButton(text="❌ Cancel Order", callback_data=f"cancelupi:{order_id}")],
+            [InlineKeyboardButton(text="🛟 Payment Help", callback_data="proofhelp:upi")],
+        ]
+    )
 
 
 def upi_status_kb(order_id: int) -> InlineKeyboardMarkup:
     """Buttons shown when user taps 'I have paid - send proof'."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Check Status", callback_data=f"checkupi:{order_id}")],
             [InlineKeyboardButton(text="✍️ Submit 12-Digit UTR", callback_data=f"submitutr:{order_id}")],
+            [InlineKeyboardButton(text="🔄 Check Status", callback_data=f"checkupi:{order_id}")],
             [InlineKeyboardButton(text="◀️ Back to Payment", callback_data=f"backtoupi:{order_id}")],
         ]
     )
