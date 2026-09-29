@@ -124,6 +124,8 @@ async def admin(message: Message):
         "/editnote PRODUCT_ID - Set customer instructions\n"
         "/viewnote PRODUCT_ID - View customer instructions\n\n"
         "📢 <b>Broadcasts & Support:</b>\n"
+        "/announceproduct PRODUCT_ID - Announce new product to channels\n"
+        "/announcerestock PRODUCT_ID [UNITS] - Send restock alert to channels & subscribers\n"
         "/postchannel MESSAGE - Post offer/update to Prime Hub channel\n"
         "/announce MESSAGE - Post to all update chats\n"
         "/broadcast - Send broadcast to users\n"
@@ -350,7 +352,40 @@ async def add_is_file(message: Message, state: FSMContext):
             image_file_id=data.get("image_file_id"),
         )
     await state.clear()
-    await message.answer(f"✅ Product added. ID: {product.id}\n\n⚠️ Stock is 0, so customers cannot order yet. Add stock with /addstock {product.id}")
+
+    # If manual delivery, announce immediately since stock is ready
+    if data.get("delivery") == "manual":
+        from app.services.announcements import notify_new_product
+        try:
+            _, chats_notified = await notify_new_product(message.bot, product, available=0)
+            await message.answer(
+                f"✅ <b>Product #{product.id} created!</b>\n\n"
+                f"📦 <b>{escape(product.name)}</b> (${float(product.price):.2f})\n"
+                f"🚚 Delivery Mode: <b>Manual</b>\n\n"
+                f"📢 <i>Automatic announcement card dispatched to {chats_notified} channel(s)/group(s)!</i>",
+                parse_mode="HTML",
+            )
+            return
+        except Exception as exc:
+            logging.warning(f"Could not announce manual product #{product.id}: {exc}")
+
+    # For instant delivery products:
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Announce New Product Now", callback_data=f"announceprod:{product.id}")],
+            [InlineKeyboardButton(text="📢 Blast to All Bot Users", callback_data=f"announceprodall:{product.id}")],
+        ]
+    )
+    await message.answer(
+        f"✅ <b>Product #{product.id} created successfully!</b>\n\n"
+        f"📦 <b>{escape(product.name)}</b> (${float(product.price):.2f})\n"
+        f"⚠️ Stock is currently 0.\n\n"
+        f"1. Add your stock items with: <code>/addstock {product.id}</code>\n"
+        f"   <i>(Adding stock will also automatically dispatch the clean restock card to channels & subscribers!)</i>\n\n"
+        f"2. Or tap below to announce this new product to channels/groups immediately:",
+        reply_markup=markup,
+        parse_mode="HTML",
+    )
 
 
 
@@ -1557,7 +1592,7 @@ async def stock_status(message: Message):
             for product, available, reserved in rows:
                 available = await live_stock(product.id, available, product=product)
                 mode = getattr(product, "delivery_mode", "instant")
-                source = "Paglu API" if is_paglu_product(product.id, product) else mode
+                source = "Automated" if is_paglu_product(product.id, product) else mode
                 status = "✅" if available > 0 else "❌"
                 lines.append(f"{status} #{product.id} {product.name} | ${float(product.price):.2f} | Available: {available} | {source}")
             await message.answer("\n".join(lines), parse_mode="HTML")
@@ -2188,7 +2223,7 @@ async def vente_unlink_command(message: Message):
 async def check_restock_command(message: Message):
     if not admin_only(message):
         return
-    await message.answer("⏳ <i>Checking supplier stock levels on Paglu Shop Bot and VenteBot...</i>", parse_mode="HTML")
+    await message.answer("⏳ <i>Checking automated stock levels for all connected products...</i>", parse_mode="HTML")
     from app.services.restock_monitor import check_supplier_restocks, _last_known_stock
     try:
         report = await check_supplier_restocks(message.bot)
@@ -2198,19 +2233,126 @@ async def check_restock_command(message: Message):
             await message.answer(
                 f"🎉 <b>New Stock Detected & Alerts Sent!</b>\n\n"
                 f"{items_str}\n\n"
-                f"📊 Currently monitoring {tracked_count} supplier product(s) every 15 minutes.",
+                f"📊 Currently monitoring {tracked_count} product(s) every 15 minutes.",
                 parse_mode="HTML",
             )
         else:
             await message.answer(
                 f"✅ <b>Stock check complete.</b>\n\n"
-                f"No new supplier restocks detected at this time.\n"
-                f"📊 Currently tracking <b>{tracked_count}</b> linked supplier product(s).\n"
+                f"No new restocks detected at this time.\n"
+                f"📊 Currently tracking <b>{tracked_count}</b> connected product(s).\n"
                 f"⏱️ Automated background check runs every <b>15 minutes</b>.",
                 parse_mode="HTML",
             )
     except Exception as exc:
         await message.answer(f"❌ Error during restock check: <code>{escape(str(exc))}</code>", parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("announceprod:"))
+async def announce_product_callback(call: CallbackQuery):
+    if not admin_only(call):
+        return
+    prod_id = int(call.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, prod_id)
+        if not product:
+            await call.answer("Product not found.", show_alert=True)
+            return
+        from app.services.ventebot import get_effective_product_stock
+        stock = await get_effective_product_stock(session, product, force_refresh=True)
+
+    from app.services.announcements import notify_new_product
+    _, chats = await notify_new_product(call.bot, product, available=stock, broadcast_users=False)
+    await call.answer(f"Dispatched announcement to {chats} chat(s)!", show_alert=True)
+    await call.message.answer(
+        f"📢 <b>New Product Announcement Dispatched!</b>\n\n"
+        f"📦 <b>{escape(product.name)}</b>\n"
+        f"✅ Clean announcement card sent to <b>{chats}</b> channel(s)/group(s) and admins.",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("announceprodall:"))
+async def announce_product_all_callback(call: CallbackQuery):
+    if not admin_only(call):
+        return
+    prod_id = int(call.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, prod_id)
+        if not product:
+            await call.answer("Product not found.", show_alert=True)
+            return
+        from app.services.ventebot import get_effective_product_stock
+        stock = await get_effective_product_stock(session, product, force_refresh=True)
+
+    await call.answer("Broadcasting...", show_alert=False)
+    await call.message.answer("⏳ <i>Broadcasting clean product announcement card to all bot users & channels...</i>", parse_mode="HTML")
+    from app.services.announcements import notify_new_product
+    users_cnt, chats_cnt = await notify_new_product(call.bot, product, available=stock, broadcast_users=True)
+    await call.message.answer(
+        f"✅ <b>Broadcast Complete!</b>\n\n"
+        f"📦 <b>{escape(product.name)}</b>\n"
+        f"👥 In-bot users notified: <b>{users_cnt}</b>\n"
+        f"📢 Channels/groups: <b>{chats_cnt}</b>",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("announceproduct"))
+async def announce_product_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/announceproduct PRODUCT_ID</code>\nExample: <code>/announceproduct 5</code>", parse_mode="HTML")
+        return
+    prod_id = int(parts[1])
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, prod_id)
+        if not product:
+            await message.answer(f"Product #{prod_id} not found.")
+            return
+        from app.services.ventebot import get_effective_product_stock
+        stock = await get_effective_product_stock(session, product, force_refresh=True)
+
+    from app.services.announcements import notify_new_product
+    _, chats = await notify_new_product(message.bot, product, available=stock, broadcast_users=False)
+    await message.answer(
+        f"📢 <b>New Product Announcement Dispatched!</b>\n\n"
+        f"📦 <b>{escape(product.name)}</b>\n"
+        f"✅ Clean announcement card sent to <b>{chats}</b> channel(s)/group(s) and admins.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("announcerestock"))
+async def announce_restock_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/announcerestock PRODUCT_ID [UNITS]</code>\nExample: <code>/announcerestock 6 50</code>", parse_mode="HTML")
+        return
+    prod_id = int(parts[1])
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, prod_id)
+        if not product:
+            await message.answer(f"Product #{prod_id} not found.")
+            return
+        from app.services.ventebot import get_effective_product_stock
+        stock = await get_effective_product_stock(session, product, force_refresh=True)
+
+    added = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else max(1, stock)
+    from app.services.announcements import notify_restock
+    user_sent, chats_notified = await notify_restock(message.bot, product, added, stock)
+    await message.answer(
+        f"🔔 <b>Restock Announcement Dispatched!</b>\n\n"
+        f"📦 <b>{escape(product.name)}</b>\n"
+        f"👥 In-bot subscribers notified: <b>{user_sent}</b>\n"
+        f"📢 Channels/groups broadcast: <b>{chats_notified}</b>",
+        parse_mode="HTML",
+    )
+
 
 
 

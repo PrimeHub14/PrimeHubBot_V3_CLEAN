@@ -26,7 +26,6 @@ async def notify_admins_new_sale(bot: Bot, session: AsyncSession, order: Order) 
 
         pay_method = (order.payment_method or "Automated").upper()
         utr_info = f"\n🔢 UTR / Ref: <code>{escape(str(order.payment_proof_value))}</code>" if order.payment_proof_value else ""
-        supplier_info = f"\n🌐 Supplier: <b>{escape(order.supplier_source)}</b> (Ref #{order.supplier_order_id})" if order.supplier_source else ""
 
         text = (
             "🎉 <b>New Sale Completed & Delivered!</b>\n"
@@ -35,7 +34,7 @@ async def notify_admins_new_sale(bot: Bot, session: AsyncSession, order: Order) 
             f"📦 Product: <b>{escape(product_name)}</b>\n"
             f"🔢 Quantity: <b>{order.quantity or 1}</b>\n"
             f"💵 Total: <b>${float(order.amount):.2f}</b> (approx ₹{inr_val:,.2f})\n"
-            f"💳 Payment: <b>{escape(pay_method)}</b>{utr_info}{supplier_info}\n\n"
+            f"💳 Payment: <b>{escape(pay_method)}</b>{utr_info}\n\n"
             f"👤 Customer: <b>{escape(customer_name)}</b>\n"
             f"📱 Handle: <b>{escape(username)}</b>\n"
             f"🆔 Telegram ID: <code>{order.user_id}</code>\n"
