@@ -83,16 +83,7 @@ async def direct_upi(call: CallbackQuery):
         await session.commit()
 
     inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
-    is_gemini_18 = (
-        product
-        and "gemini" in (product.name or "").lower()
-        and ("18" in (product.name or "").lower() or product.id == getattr(settings, "LOOTPAGLU_PRODUCT_ID", 6))
-    )
-    if is_gemini_18:
-        # Sunday Flash Offer: ₹149 per unit
-        inr_amount = 149 * quantity
-    else:
-        inr_amount = compute_upi_inr(float(order.amount), order.id)
+    inr_amount = compute_upi_inr(float(order.amount), order.id)
 
     safe_name = escape(product.name or "")
     payee_upi = settings.UPI_ID or "primehubus@axl"
@@ -266,15 +257,7 @@ async def upi_back_to_payment(call: CallbackQuery):
             return
 
         inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
-        is_gemini_18 = (
-            order.product
-            and "gemini" in (order.product.name or "").lower()
-            and ("18" in (order.product.name or "").lower() or order.product_id == getattr(settings, "LOOTPAGLU_PRODUCT_ID", 6))
-        )
-        if is_gemini_18:
-            inr_amount = 149 * (order.quantity or 1)
-        else:
-            inr_amount = compute_upi_inr(float(order.amount), order.id)
+        inr_amount = compute_upi_inr(float(order.amount), order.id)
 
         safe_name = escape(order.product.name if order.product else "")
         payee_upi = settings.UPI_ID or "primehubus@axl"

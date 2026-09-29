@@ -113,14 +113,15 @@ async def start_command(message: Message, state: FSMContext) -> None:
             safe_cat = escape(product.category or "AI Tools")
             first_name = message.from_user.first_name if message.from_user else "friend"
             price_val = float(product.price)
+            inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+            inr_est = int(round(price_val * inr_rate))
 
             caption = (
                 f"🎁 <b>GEMINI AI PRO + 5TB + ANTIGRAVITY — 18 Months</b>\n"
                 f"<i>⚡ Single-Click Activation On Your Own Email</i>\n\n"
                 f"Welcome, <b>{escape(first_name)}</b>! Your exclusive deal is unlocked:\n"
                 f"Original: <s>₹35,999</s> • Regular: <s>₹799</s>\n"
-                f"🔥 <b>SUNDAY SPECIAL OFFER: JUST ₹149 ONLY!</b>\n"
-                f"⏳ <i>Valid tonight till 11:00 PM Sharp — claim before it's gone!</i>\n\n"
+                f"🔥 <b>EXCLUSIVE DEAL: JUST ₹{inr_est:,} (${price_val:.2f} USD)!</b>\n\n"
                 f"📦 <b>Your 18-Month Package Includes:</b>\n"
                 f"• <b>5TB Storage</b> (Google Drive + Gmail + Photos)\n"
                 f"• <b>Gemini Advanced AI</b> & Deep Reasoning\n"
@@ -133,7 +134,7 @@ async def start_command(message: Message, state: FSMContext) -> None:
                 f"⚡ <b>How It Works:</b>\n"
                 f"Receive Redeem Link → Open in Chrome → Select your own Google account → Click Activate Plan!\n\n"
                 f"━━━━━━━━━━━━━━━━━━━\n"
-                f"💵 Price: <b>₹149</b>\n"
+                f"💵 Price: <b>₹{inr_est:,} (${price_val:.2f} USD)</b>\n"
                 f"📦 Available Redeem Codes: <b>{available_stock} slots</b>"
             )
 
