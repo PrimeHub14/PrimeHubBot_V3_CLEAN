@@ -43,6 +43,11 @@ async def init_db() -> None:
             pass
         # All products require unique stock before checkout. Existing products become out of stock until /addstock is used.
         await conn.execute(text("UPDATE products SET stock_enabled = TRUE WHERE stock_enabled IS DISTINCT FROM TRUE"))
+        # Migrate legacy Paglu_1 service ID to Paglu_8 (Gemini 18 Months Pro on lootpaglu.in)
+        try:
+            await conn.execute(text("UPDATE products SET paglu_service_id = 'Paglu_8' WHERE paglu_service_id IN ('Paglu_1', 'paglu_1') OR (id = 6 AND (paglu_service_id IS NULL OR paglu_service_id = ''))"))
+        except Exception:
+            pass
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50)"))
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1 NOT NULL"))
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_proof_type VARCHAR(30)"))

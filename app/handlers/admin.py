@@ -529,7 +529,7 @@ async def paglu_list_command(message: Message):
         stk_badge = f"🟢 <b>{stock} in stock</b>" if int(stock) > 0 else "🔴 <i>Out of stock</i>"
 
         matched = next(
-            (p for p in primehub_prods if getattr(p, "paglu_service_id", None) == s_id or (s_id == "Paglu_1" and "gemini" in p.name.lower())),
+            (p for p in primehub_prods if getattr(p, "paglu_service_id", None) == s_id or (s_id in {"Paglu_1", "Paglu_8"} and "gemini" in p.name.lower())),
             None,
         )
         match_info = f"✅ Linked to <b>#{matched.id} {escape(matched.name)}</b>" if matched else "⚪ <i>Not linked</i>"
@@ -661,10 +661,10 @@ async def paglu_link_command(message: Message):
                 if not matched_p:
                     continue
 
-                # Find matching service in Paglu
+                # Find matching service in Paglu (prefer in-stock services if multiple match, e.g. Paglu_8 over Paglu_10)
                 matched_s = next(
-                    (s for s in services if any(kw in str(s.get("name", "")).lower() for kw in keywords)),
-                    None,
+                    (s for s in services if any(kw in str(s.get("name", "")).lower() for kw in keywords) and int(s.get("available_stock", 0)) > 0),
+                    next((s for s in services if any(kw in str(s.get("name", "")).lower() for kw in keywords)), None)
                 )
                 if not matched_s:
                     continue

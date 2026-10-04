@@ -66,12 +66,23 @@ def set_product_paglu_service(product_id: int, service_id: str | None) -> None:
 
 def get_paglu_service_id_for_product(product_id: int, product: Any = None) -> str | None:
     if product and getattr(product, "paglu_service_id", None):
-        return str(product.paglu_service_id).strip()
+        sid = str(product.paglu_service_id).strip()
+        if sid.lower() in {"paglu_1", "paglu1"}:
+            return "Paglu_8"
+        return sid
     if int(product_id) in _product_service_map:
-        return _product_service_map[int(product_id)]
+        sid = _product_service_map[int(product_id)]
+        if sid.lower() in {"paglu_1", "paglu1"}:
+            return "Paglu_8"
+        return sid
     target = get_paglu_product_id()
     if target > 0 and int(product_id) == int(target):
-        return get_paglu_service_id()
+        sid = get_paglu_service_id()
+        if sid.lower() in {"paglu_1", "paglu1"}:
+            return "Paglu_8"
+        return sid
+    if product and "gemini" in str(getattr(product, "name", "")).lower():
+        return "Paglu_8"
     return None
 
 
@@ -148,15 +159,25 @@ class LootPagluClient:
             return self._cached_products
 
     async def service(self, service_id: str | None = None, force_refresh: bool = False) -> dict[str, Any] | None:
-        wanted = (service_id or get_paglu_service_id()).strip().lower()
+        raw_wanted = (service_id or get_paglu_service_id()).strip().lower()
+        wanted = "paglu_8" if raw_wanted in {"paglu_1", "paglu1"} else raw_wanted
         services = await self.products(force_refresh=force_refresh)
         for service in services:
             if not isinstance(service, dict):
                 continue
             s_id = str(service.get("service_id") or "").strip().lower()
             s_name = str(service.get("name") or "").strip().lower()
-            if s_id == wanted or wanted in s_name:
+            if s_id == wanted or (wanted not in {"paglu_8"} and wanted in s_name):
                 return service
+        # Fallback: if looking for Paglu_8 or Gemini, find the active in-stock Gemini service
+        if wanted == "paglu_8" or "gemini" in wanted:
+            for service in services:
+                if not isinstance(service, dict):
+                    continue
+                s_id = str(service.get("service_id") or "").strip().lower()
+                s_name = str(service.get("name") or "").strip().lower()
+                if "gemini" in s_name and (s_id == "paglu_8" or int(service.get("available_stock", 0)) > 0):
+                    return service
         return None
 
     async def stock(self, service_id: str | None = None, force_refresh: bool = False) -> int:
@@ -170,7 +191,8 @@ class LootPagluClient:
 
     async def order(self, quantity: int, service_id: str | None = None) -> dict[str, Any]:
         quantity = max(1, int(quantity))
-        target_service = (service_id or get_paglu_service_id()).strip()
+        raw_target = (service_id or get_paglu_service_id()).strip()
+        target_service = "Paglu_8" if raw_target.lower() in {"paglu_1", "paglu1"} else raw_target
         payload = {
             "service_id": target_service,
             "quantity": quantity,
