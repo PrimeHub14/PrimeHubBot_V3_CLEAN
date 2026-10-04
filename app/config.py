@@ -24,10 +24,10 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_USERNAME: str = "PrimeHubUs_Bot"
 
     # Loot Paglu supplier integration (only the mapped Prime Hub product uses this)
-    LOOTPAGLU_API_KEY: str = ""
-    LOOTPAGLU_BASE_URL: str = "https://alkalize-antibody-agreeably.ngrok-free.dev"
+    LOOTPAGLU_API_KEY: str = "LootPaglu_a9deef3d11f71b579a28b0ad0fc9e24849a032eff709b395"
+    LOOTPAGLU_BASE_URL: str = "https://lootpaglu.in"
     LOOTPAGLU_PRODUCT_ID: int = 6
-    LOOTPAGLU_SERVICE_ID: str = "Paglu_1"
+    LOOTPAGLU_SERVICE_ID: str = "Paglu_8"
     LOOTPAGLU_CURRENCY: str = "inr"
     LOOTPAGLU_TIMEOUT_SECONDS: int = 20
 
@@ -45,9 +45,13 @@ class Settings(BaseSettings):
     BINANCE_API_BASE_URL: str = "https://api.binance.com"
     BINANCE_PAYMENT_TIMEOUT_MINUTES: int = 30
     BINANCE_POLL_SECONDS: int = 15
-    UPI_ID: str = "primehubus@axl"
-    UPI_NAME: str = "Abdullah"
+    UPI_ID: str = "paytm.s3p1990@pty"
+    UPI_NAME: str = "Prime Hub"
     UPI_INR_PER_USD: float = 86.5
+
+    # Paytm Business Gateway integration
+    PAYTM_MID: str = "sZtrTY94683718733047"
+    PAYTM_MERCHANT_KEY: str = ""
 
     # EkQR Automated UPI Gateway integration
     EKQR_API_KEY: str = ""

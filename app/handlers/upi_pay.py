@@ -86,8 +86,8 @@ async def direct_upi(call: CallbackQuery):
     inr_amount = compute_upi_inr(float(order.amount), order.id)
 
     safe_name = escape(product.name or "")
-    payee_upi = settings.UPI_ID or "primehubus@axl"
-    payee_name = settings.UPI_NAME or "Abdullah"
+    payee_upi = settings.UPI_ID or "paytm.s3p1990@pty"
+    payee_name = settings.UPI_NAME or "Prime Hub"
 
     upi_deep_link = (
         f"upi://pay?pa={payee_upi}"
@@ -260,8 +260,8 @@ async def upi_back_to_payment(call: CallbackQuery):
         inr_amount = compute_upi_inr(float(order.amount), order.id)
 
         safe_name = escape(order.product.name if order.product else "")
-        payee_upi = settings.UPI_ID or "primehubus@axl"
-        payee_name = settings.UPI_NAME or "Abdullah"
+        payee_upi = settings.UPI_ID or "paytm.s3p1990@pty"
+        payee_name = settings.UPI_NAME or "Prime Hub"
 
         caption = (
             "🇮🇳 <b>UPI Payment — Instant Auto Delivery</b>\n"

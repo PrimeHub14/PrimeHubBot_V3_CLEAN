@@ -48,7 +48,7 @@ def get_paglu_service_id() -> str:
     global _paglu_override_service_id
     if _paglu_override_service_id is not None:
         return _paglu_override_service_id
-    return str(settings.LOOTPAGLU_SERVICE_ID or "Paglu_1")
+    return str(settings.LOOTPAGLU_SERVICE_ID or "Paglu_8")
 
 
 def set_paglu_service_id(service_id: str | None) -> None:
@@ -83,8 +83,8 @@ def is_paglu_product(product_id: int, product: Any = None) -> bool:
 
 class LootPagluClient:
     def __init__(self) -> None:
-        self.base_url = settings.LOOTPAGLU_BASE_URL.rstrip("/")
-        self.api_key = settings.LOOTPAGLU_API_KEY.strip()
+        self.base_url = (getattr(settings, "LOOTPAGLU_BASE_URL", "") or "https://lootpaglu.in").rstrip("/")
+        self.api_key = (getattr(settings, "LOOTPAGLU_API_KEY", "") or "").strip()
         self.timeout = aiohttp.ClientTimeout(total=max(5, settings.LOOTPAGLU_TIMEOUT_SECONDS))
         self._cached_products: list[dict[str, Any]] = []
         self._cache_time: float = 0.0
