@@ -3,13 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
-from sqlalchemy import delete, func, select, or_
+from sqlalchemy import delete, func, select, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import uuid
 
 from app.config import settings
-from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription, Coupon, CouponRedemption, ReferralReward, LoyaltyTransaction, FlashSale, WishlistItem, ProductReview, ProductView, ScheduledBroadcast, AdminAuditLog, IncomingUpiPayment
+from app.db.models import Order, Product, StockItem, User, SupportTicket, StockSubscription, Coupon, CouponRedemption, ReferralReward, LoyaltyTransaction, FlashSale, WishlistItem, ProductReview, ProductView, ScheduledBroadcast, AdminAuditLog, IncomingUpiPayment, BotSetting
 
 MANUAL_METHODS = {"wallet", "binance", "upi"}
 
@@ -1192,6 +1192,103 @@ async def get_meta_funnel_stats(session: AsyncSession) -> dict:
         "revenue": revenue,
         "conversion_rate": conv_rate,
     }
+
+
+async def get_setting(session: AsyncSession, key: str, default: str = "") -> str:
+    stmt = select(BotSetting).where(BotSetting.key == key)
+    res = (await session.execute(stmt)).scalar_one_or_none()
+    return res.value if res else default
+
+
+async def set_setting(session: AsyncSession, key: str, value: str) -> None:
+    stmt = select(BotSetting).where(BotSetting.key == key)
+    res = (await session.execute(stmt)).scalar_one_or_none()
+    if res:
+        res.value = str(value)
+    else:
+        res = BotSetting(key=key, value=str(value))
+        session.add(res)
+    await session.commit()
+
+
+async def get_setting_bool(session: AsyncSession, key: str, default: bool = False) -> bool:
+    val = await get_setting(session, key, str(default).lower())
+    return val.strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def set_setting_bool(session: AsyncSession, key: str, value: bool) -> None:
+    await set_setting(session, key, "true" if value else "false")
+
+
+async def bulk_set_products_active(session: AsyncSession, product_ids: list[int], active: bool) -> int:
+    if not product_ids:
+        return 0
+    stmt = update(Product).where(Product.id.in_(product_ids)).values(active=active)
+    res = await session.execute(stmt)
+    await session.commit()
+    return res.rowcount or 0
+
+
+async def get_traffic_source_stats(session: AsyncSession) -> list[dict]:
+    users_stmt = select(func.coalesce(User.source, "direct"), func.count(User.id)).group_by(func.coalesce(User.source, "direct"))
+    users_data = dict((await session.execute(users_stmt)).all())
+
+    paid_stmt = (
+        select(
+            func.coalesce(User.source, Order.source, "direct"),
+            func.count(Order.id),
+            func.coalesce(func.sum(Order.amount), 0),
+        )
+        .join(User, Order.user_id == User.id)
+        .where(or_(Order.status.in_(["paid", "finished", "confirmed", "sending"]), Order.delivered.is_(True)))
+        .group_by(func.coalesce(User.source, Order.source, "direct"))
+    )
+    paid_data = {}
+    for src, cnt, rev in (await session.execute(paid_stmt)).all():
+        paid_data[src] = (cnt, float(rev))
+
+    all_sources = set(users_data.keys()) | set(paid_data.keys())
+    result = []
+    for s in all_sources:
+        src_label = str(s or "direct/organic")
+        u_count = users_data.get(s, 0)
+        o_count, rev = paid_data.get(s, (0, 0.0))
+        result.append({
+            "source": src_label,
+            "users": u_count,
+            "orders": o_count,
+            "revenue": rev,
+        })
+    result.sort(key=lambda x: (x["revenue"], x["orders"], x["users"]), reverse=True)
+    return result
+
+
+async def get_hottest_out_of_stock_demands(session: AsyncSession, limit: int = 6) -> list[dict]:
+    stmt = (
+        select(Product, func.count(StockSubscription.id).label("sub_count"))
+        .join(StockSubscription, StockSubscription.product_id == Product.id)
+        .where(StockSubscription.active.is_(True))
+        .group_by(Product.id)
+        .order_by(func.count(StockSubscription.id).desc())
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [{"product": p, "subscribers": cnt} for p, cnt in rows]
+
+
+async def get_abandoned_orders(session: AsyncSession, hours: int = 24) -> list[Order]:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    stmt = (
+        select(Order)
+        .where(
+            Order.status.in_(["pending", "manual_pending"]),
+            Order.created_at >= cutoff,
+            Order.delivered.is_(False),
+        )
+        .order_by(Order.id.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
 
 
 

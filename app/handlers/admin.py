@@ -95,12 +95,115 @@ def edit_product_kb(product_id: int, active: bool) -> InlineKeyboardMarkup:
     )
 
 
+def admin_main_dashboard_kb(hide_oos: bool = False) -> InlineKeyboardMarkup:
+    oos_text = "🙈 Auto-Hide 0-Stock: ON" if hide_oos else "👀 Auto-Hide 0-Stock: OFF"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📊 Growth & Sales KPI", callback_data="admin_nav:growth"),
+                InlineKeyboardButton(text="📦 Out-of-Stock Manager", callback_data="admin_nav:oos"),
+            ],
+            [
+                InlineKeyboardButton(text="🚀 Viral Promo Tools", callback_data="admin_nav:promotools"),
+                InlineKeyboardButton(text="👥 Traffic Attribution", callback_data="admin_nav:sources"),
+            ],
+            [
+                InlineKeyboardButton(text=oos_text, callback_data="admin_oos:toggle_autohide_main"),
+                InlineKeyboardButton(text="🛒 Recent Orders", callback_data="admin_nav:orders"),
+            ],
+            [
+                InlineKeyboardButton(text="🤖 Paglu Bot Status", callback_data="admin_nav:paglustatus"),
+                InlineKeyboardButton(text="🔄 Check Restock Now", callback_data="admin_nav:checkrestock"),
+            ],
+            [
+                InlineKeyboardButton(text="📢 Broadcast to Users", callback_data="admin_nav:broadcast"),
+                InlineKeyboardButton(text="✖ Close", callback_data="admin_nav:close"),
+            ],
+        ]
+    )
+
+
+async def render_outofstock_dashboard(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
+    all_products = await repo.list_products(session, only_active=False)
+    from app.handlers.user import product_stock_map
+    stock_map = await product_stock_map(session, all_products)
+    hide_oos = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
+
+    in_stock = []
+    out_of_stock = []
+    for p in all_products:
+        stk = int(stock_map.get(p.id, 0))
+        if stk > 0:
+            in_stock.append((p, stk))
+        else:
+            out_of_stock.append((p, stk))
+
+    status_badge = "🟢 ENABLED (Auto-Hidden from Store)" if hide_oos else "🔴 DISABLED (Showing with 'OUT OF STOCK' tag)"
+
+    text = (
+        "📦 <b>Out-of-Stock Management Dashboard</b>\n\n"
+        "📊 <b>Inventory Health:</b>\n"
+        f"• Total Products: <b>{len(all_products)}</b>\n"
+        f"• 🟢 In Stock: <b>{len(in_stock)}</b>\n"
+        f"• 🔴 Out of Stock: <b>{len(out_of_stock)}</b>\n\n"
+        f"⚙️ <b>Store Auto-Hide 0-Stock:</b> {status_badge}\n"
+        "<i>When Enabled, buyers will only see in-stock products in the shop!</i>\n\n"
+        f"👇 <b>Manage Out-of-Stock Products ({len(out_of_stock)}):</b>\n"
+    )
+
+    if not out_of_stock:
+        text += "🎉 <i>All products currently have stock! Nothing is out of stock.</i>\n"
+    else:
+        for p, _ in out_of_stock[:15]:
+            status_text = "🟢 Active in DB" if p.active else "🔴 Disabled in DB"
+            text += f"• <b>{escape(p.name)}</b> (ID #{p.id}) — ${float(p.price):.2f} [{status_text}]\n"
+        if len(out_of_stock) > 15:
+            text += f"<i>...and {len(out_of_stock) - 15} more.</i>\n"
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="🙈 Auto-Hide: Turn ON" if not hide_oos else "👀 Auto-Hide: Turn OFF",
+                callback_data="admin_oos:toggle_autohide",
+            ),
+        ],
+        [
+            InlineKeyboardButton(text="🚫 Bulk Disable All 0-Stock", callback_data="admin_oos:bulk_disable"),
+            InlineKeyboardButton(text="✅ Bulk Enable All Products", callback_data="admin_oos:bulk_enable"),
+        ],
+    ]
+
+    for p, _ in out_of_stock[:12]:
+        btn_action = "🔴 Disable" if p.active else "🟢 Enable"
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{btn_action} #{p.id} {p.name[:20]}",
+                callback_data=f"admin_oos:toggle:{p.id}",
+            ),
+            InlineKeyboardButton(
+                text="➕ Add Stock",
+                callback_data=f"admin_oos:addstock:{p.id}",
+            ),
+        ])
+
+    rows.append([
+        InlineKeyboardButton(text="🔄 Refresh", callback_data="admin_oos:refresh"),
+        InlineKeyboardButton(text="🔙 Admin Panel", callback_data="admin_nav:main"),
+    ])
+
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @router.message(Command("admin"))
 async def admin(message: Message):
     if not admin_only(message):
         return
+    async with SessionLocal() as session:
+        hide_oos = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
+    oos_indicator = "🟢 Auto-Hidden from Store" if hide_oos else "🔴 Visible with 'OUT OF STOCK' badge"
     await message.answer(
-        "👤 <b>Prime Hub Admin Panel</b>\n\n"
+        "👤 <b>Prime Hub Admin Control Center</b>\n\n"
+        f"⚙️ <b>Auto-Hide 0-Stock:</b> <b>{oos_indicator}</b>\n\n"
         "📦 <b>Order & Delivery Management:</b>\n"
         "/adminorders - Recent orders dashboard\n"
         "/order ORDER_ID - Inspect order details & customer info\n"
@@ -109,12 +212,13 @@ async def admin(message: Message):
         "/stats - Store sales & user statistics\n"
         "/reports - Sales reports by date range\n"
         "/solddata - Exact sold-item ledger & CSV export\n\n"
-        "🛍️ <b>Catalog & Stock:</b>\n"
+        "🛍️ <b>Catalog & Out-of-Stock Controls:</b>\n"
+        "/outofstock - <b>Out-of-Stock Manager</b> (disable/enable/hide)\n"
+        "/toggleoutofstock - Quick toggle auto-hiding 0-stock products\n"
         "/addproduct - Add product\n"
         "/listproducts - List products\n"
         "/editproduct PRODUCT_ID - Edit product\n"
         "/moveproduct PRODUCT_ID - Move product to category\n"
-        "/deletecategory - Remove an empty category\n"
         "/delproduct PRODUCT_ID - Disable product\n"
         "/addstock PRODUCT_ID - Add stock (paste text or upload .txt file)\n"
         "/importstock PRODUCT_ID - Import stock from file\n"
@@ -123,6 +227,12 @@ async def admin(message: Message):
         "/disablestock PRODUCT_ID - Use reusable delivery\n"
         "/editnote PRODUCT_ID - Set customer instructions\n"
         "/viewnote PRODUCT_ID - View customer instructions\n\n"
+        "🚀 <b>Growth & Marketing (Fast Scaling):</b>\n"
+        "/growth - Growth & Sales KPI Dashboard\n"
+        "/promotools - Trackable promo links & copy-paste offer templates\n"
+        "/sources - Traffic acquisition & revenue per channel\n"
+        "/hotdemand - High-demand out-of-stock items customers want\n"
+        "/leads - Recover abandoned / unpaid orders\n\n"
         "📢 <b>Broadcasts & Support:</b>\n"
         "/announceproduct PRODUCT_ID - Announce new product to channels\n"
         "/announcerestock PRODUCT_ID [UNITS] - Send restock alert to channels & subscribers\n"
@@ -147,9 +257,298 @@ async def admin(message: Message):
         "/pagluunlink [PRIMEHUB_ID] - Disconnect Paglu bot\n"
         "/paglutest - Test Paglu API connectivity & wallet balance\n\n"
         "🔄 <b>Supplier Stock Monitor (15-min auto):</b>\n"
-        "/checkrestock - Manually check Paglu & VenteBot for new stock & trigger alerts",
+        "/checkrestock - Manually check Paglu & VenteBot for new stock & trigger alerts\n\n"
+        "👇 <i>Use interactive buttons below for 1-tap navigation:</i>",
+        reply_markup=admin_main_dashboard_kb(hide_oos),
         parse_mode="HTML",
     )
+
+
+@router.message(Command("outofstock", "stockmanager", "oos"))
+async def outofstock_cmd(message: Message):
+    if not admin_only(message):
+        return
+    async with SessionLocal() as session:
+        text, kb = await render_outofstock_dashboard(session)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.message(Command("toggleoutofstock", "hideoutofstock"))
+async def toggle_outofstock_cmd(message: Message):
+    if not admin_only(message):
+        return
+    async with SessionLocal() as session:
+        current = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
+        new_val = not current
+        await repo.set_setting_bool(session, "hide_out_of_stock", new_val)
+    status_str = "ENABLED 🟢 (0-stock products are hidden from customers)" if new_val else "DISABLED 🔴 (0-stock products show in store with OUT OF STOCK badge)"
+    await message.answer(f"✅ Auto-Hide Out-of-Stock is now: <b>{status_str}</b>", parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_oos:toggle_autohide")
+async def cb_toggle_autohide(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        current = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
+        new_val = not current
+        await repo.set_setting_bool(session, "hide_out_of_stock", new_val)
+        text, kb = await render_outofstock_dashboard(session)
+    alert_msg = "✅ Auto-Hide ON: Out-of-stock items hidden from store!" if new_val else "✅ Auto-Hide OFF: Out-of-stock items visible in store."
+    await call.answer(alert_msg, show_alert=True)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "admin_oos:toggle_autohide_main")
+async def cb_toggle_autohide_main(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        current = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
+        new_val = not current
+        await repo.set_setting_bool(session, "hide_out_of_stock", new_val)
+    alert_msg = "✅ Auto-Hide ON: Out-of-stock items hidden from store!" if new_val else "✅ Auto-Hide OFF: Out-of-stock items visible in store."
+    await call.answer(alert_msg, show_alert=True)
+    try:
+        await call.message.edit_reply_markup(reply_markup=admin_main_dashboard_kb(new_val))
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "admin_oos:bulk_disable")
+async def cb_bulk_disable_oos(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        all_products = await repo.list_products(session, only_active=False)
+        from app.handlers.user import product_stock_map
+        stock_map = await product_stock_map(session, all_products)
+        oos_ids = [p.id for p in all_products if int(stock_map.get(p.id, 0)) <= 0 and p.active]
+        updated = await repo.bulk_set_products_active(session, oos_ids, False)
+        text, kb = await render_outofstock_dashboard(session)
+    await call.answer(f"🚫 Disabled {updated} out-of-stock products in DB.", show_alert=True)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "admin_oos:bulk_enable")
+async def cb_bulk_enable_all(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        all_products = await repo.list_products(session, only_active=False)
+        all_ids = [p.id for p in all_products if not p.active]
+        updated = await repo.bulk_set_products_active(session, all_ids, True)
+        text, kb = await render_outofstock_dashboard(session)
+    await call.answer(f"✅ Enabled {updated} products in DB.", show_alert=True)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("admin_oos:toggle:"))
+async def cb_toggle_single_product(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    pid = int(call.data.split(":")[2])
+    async with SessionLocal() as session:
+        prod = await repo.toggle_product_active(session, pid)
+        text, kb = await render_outofstock_dashboard(session)
+    if not prod:
+        await call.answer("Product not found.", show_alert=True)
+        return
+    status_label = "ENABLED 🟢" if prod.active else "DISABLED 🔴"
+    await call.answer(f"#{prod.id} {prod.name[:20]} is now {status_label}", show_alert=True)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("admin_oos:addstock:"))
+async def cb_addstock_prompt(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    pid = int(call.data.split(":")[2])
+    async with SessionLocal() as session:
+        prod = await repo.get_product(session, pid)
+    p_name = prod.name if prod else f"Product #{pid}"
+    await call.answer()
+    await call.message.answer(
+        f"📦 <b>To add stock for {escape(p_name)} (ID #{pid}):</b>\n\n"
+        f"<b>Option 1: Add Credentials via text or file:</b>\n"
+        f"<code>/addstock {pid}</code> (paste stock credentials or upload .txt file)\n\n"
+        f"<b>Option 2: Link with Paglu Shop Bot API:</b>\n"
+        f"<code>/paglulink {pid} SERVICE_ID</code>\n\n"
+        f"<b>Option 3: Use Reusable/Manual Delivery:</b>\n"
+        f"<code>/disablestock {pid}</code>",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_oos:refresh")
+async def cb_oos_refresh(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        text, kb = await render_outofstock_dashboard(session)
+    await call.answer("🔄 Out-of-stock data refreshed!")
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "admin_nav:main")
+async def cb_admin_nav_main(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        hide_oos = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
+    oos_indicator = "🟢 Auto-Hidden from Store" if hide_oos else "🔴 Visible with 'OUT OF STOCK' badge"
+    msg_text = (
+        "👤 <b>Prime Hub Admin Control Center</b>\n\n"
+        f"⚙️ <b>Auto-Hide 0-Stock:</b> <b>{oos_indicator}</b>\n\n"
+        "📦 <b>Order & Delivery Management:</b>\n"
+        "/adminorders - Recent orders dashboard\n"
+        "/order ORDER_ID - Inspect order details & customer info\n"
+        "/deliver ORDER_ID - Instant delivery of any order\n"
+        "/delivermanual ORDER_ID [text] - Send custom credentials\n"
+        "/stats - Store sales & user statistics\n"
+        "/reports - Sales reports by date range\n"
+        "/solddata - Exact sold-item ledger & CSV export\n\n"
+        "🛍️ <b>Catalog & Out-of-Stock Controls:</b>\n"
+        "/outofstock - <b>Out-of-Stock Manager</b> (disable/enable/hide)\n"
+        "/toggleoutofstock - Quick toggle auto-hiding 0-stock products\n"
+        "/addproduct - Add product\n"
+        "/listproducts - List products\n"
+        "/editproduct PRODUCT_ID - Edit product\n"
+        "/delproduct PRODUCT_ID - Disable product\n"
+        "/addstock PRODUCT_ID - Add stock\n\n"
+        "🚀 <b>Growth & Marketing (Fast Scaling):</b>\n"
+        "/growth - Growth & Sales KPI Dashboard\n"
+        "/promotools - Trackable promo links & copy-paste offer templates\n"
+        "/sources - Traffic acquisition & revenue per channel\n"
+        "/hotdemand - High-demand out-of-stock items customers want\n"
+        "/leads - Recover abandoned / unpaid orders\n\n"
+        "👇 <i>Use interactive buttons below for 1-tap navigation:</i>"
+    )
+    await call.answer()
+    try:
+        await call.message.edit_text(msg_text, reply_markup=admin_main_dashboard_kb(hide_oos), parse_mode="HTML")
+    except Exception:
+        await call.message.answer(msg_text, reply_markup=admin_main_dashboard_kb(hide_oos), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:oos")
+async def cb_admin_nav_oos(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        text, kb = await render_outofstock_dashboard(session)
+    await call.answer()
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await call.message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:orders")
+async def cb_admin_nav_orders(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    async with SessionLocal() as session:
+        orders = await repo.list_recent_orders(session, limit=10)
+    if not orders:
+        await call.message.answer("📦 No recent orders found.")
+        return
+    lines = ["📦 <b>Recent Orders Dashboard:</b>\n"]
+    for o in orders:
+        dt = o.created_at.strftime("%d %b %H:%M") if o.created_at else ""
+        p_name = o.product.name if o.product else f"ID #{o.product_id}"
+        lines.append(f"• <b>Order #{o.id}</b> — {escape(p_name[:20])} (${float(o.amount):.2f}) [{escape(o.status)}] {dt}\n  👉 Inspect: /order {o.id}")
+    await call.message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:paglustatus")
+async def cb_admin_nav_paglustatus(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    client = LootPagluClient()
+    wallet_info = await client.get_wallet_balance()
+    services = await client.get_services()
+    async with SessionLocal() as session:
+        linked_prods = await repo.list_paglu_linked_products(session)
+    text = (
+        "🤖 <b>Loot Paglu Supplier Status:</b>\n\n"
+        f"API URL: <code>{escape(client.base_url)}</code>\n"
+        f"Wallet Balance: <b>{wallet_info.get('formatted_balance', 'N/A')}</b>\n"
+        f"Wholesale Services: <b>{len(services)} available</b>\n"
+        f"Prime Hub Linked Products: <b>{len(linked_prods)} active</b>\n\n"
+        "Commands:\n"
+        "/paglulist - View all services & live stock\n"
+        "/paglulink - Connect product"
+    )
+    await call.message.answer(text, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:checkrestock")
+async def cb_admin_nav_checkrestock(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer("Checking restock...")
+    from app.services.restock_monitor import check_and_notify_restocks
+    notified = await check_and_notify_restocks(call.bot)
+    await call.message.answer(f"🔄 Restock scan complete! Sent alerts for <b>{notified}</b> products.", parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:broadcast")
+async def cb_admin_nav_broadcast(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    await call.message.answer(
+        "📢 <b>Broadcast to All Users:</b>\n\n"
+        "To broadcast an announcement or deal to all registered bot users, run:\n"
+        "<code>/broadcast Your message text here</code>\n\n"
+        "Or to post directly to your channel:\n"
+        "<code>/postchannel Your offer message</code>",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_nav:close")
+async def cb_admin_nav_close(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+
 
 
 @router.callback_query(F.data.startswith("adminapprove:"))

@@ -212,10 +212,19 @@ async def products_cmd(message: Message):
     async with SessionLocal() as session:
         products = await repo.list_products(session)
         stock_counts = await product_stock_map(session, products)
+        hide_oos = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
     if not products:
         await message.answer("No products are available yet.")
         return
-    await message.answer("🔥 <b>Available Products</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
+    visible_prods = [p for p in products if stock_counts.get(p.id, 0) > 0] if hide_oos else products
+    if not visible_prods:
+        await message.answer(
+            "ℹ️ <b>Available Products</b>\n\nAll products are currently out of stock. Restocks are added frequently!",
+            reply_markup=product_list_kb([], stock_counts, hide_out_of_stock=hide_oos),
+            parse_mode="HTML",
+        )
+        return
+    await message.answer("🔥 <b>Available Products</b>", reply_markup=product_list_kb(visible_prods, stock_counts, hide_out_of_stock=hide_oos), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("cat:"))
@@ -231,31 +240,34 @@ async def category_products(call: CallbackQuery):
                 products = await repo.list_products_by_category(session, category)
                 title = f"📂 {category}"
             stock_counts = await product_stock_map(session, products)
+            hide_oos = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
+
+        visible_prods = [p for p in products if stock_counts.get(p.id, 0) > 0] if hide_oos else products
+        msg_text = f"<b>{title}</b>"
+        if not visible_prods:
+            msg_text = f"<b>{title}</b>\n\n<i>⚠️ All items in this category are currently out of stock. Check back soon or browse All Products!</i>"
+
+        kb = product_list_kb(visible_prods, stock_counts, hide_out_of_stock=hide_oos)
 
         if getattr(call.message, "photo", None):
             try:
                 await call.message.delete()
             except Exception:
                 pass
-            if not products:
-                await call.bot.send_message(call.message.chat.id, "No products in this category yet.")
-            else:
-                await call.bot.send_message(call.message.chat.id, f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
+            await call.bot.send_message(call.message.chat.id, msg_text, reply_markup=kb, parse_mode="HTML")
         else:
             try:
-                await call.message.edit_text(f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
+                await call.message.edit_text(msg_text, reply_markup=kb, parse_mode="HTML")
             except Exception:
                 try:
                     await call.message.delete()
                 except Exception:
                     pass
-                if not products:
-                    await call.bot.send_message(call.message.chat.id, "No products in this category yet.")
-                else:
-                    await call.bot.send_message(call.message.chat.id, f"<b>{title}</b>", reply_markup=product_list_kb(products, stock_counts), parse_mode="HTML")
+                await call.bot.send_message(call.message.chat.id, msg_text, reply_markup=kb, parse_mode="HTML")
     except Exception as exc:
         logger.exception(f"Unhandled error in category_products: {exc}")
         await call.message.answer("⚠️ Could not load products. Please try again.")
+
 
 
 @router.callback_query(F.data == "reviews")

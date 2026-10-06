@@ -256,12 +256,18 @@ async def start_command(message: Message, state: FSMContext) -> None:
                 cat_products = await repo.list_products_by_category(session, target_category)
                 if cat_products:
                     stock_counts = await product_stock_map(session, cat_products)
+                    hide_oos = await repo.get_setting_bool(session, "hide_out_of_stock", default=False)
+                    visible_prods = [p for p in cat_products if stock_counts.get(p.id, 0) > 0] if hide_oos else cat_products
+                    msg_text = f"📂 <b>{escape(target_category)}</b>"
+                    if not visible_prods:
+                        msg_text += "\n\n<i>⚠️ All items in this category are currently out of stock. Check back soon or browse All Products!</i>"
                     await message.answer(
-                        f"📂 <b>{escape(target_category)}</b>",
-                        reply_markup=product_list_kb(cat_products, stock_counts),
+                        msg_text,
+                        reply_markup=product_list_kb(visible_prods, stock_counts, hide_out_of_stock=hide_oos),
                         parse_mode="HTML",
                     )
                     return
+
 
     await _show_home(message, state)
 

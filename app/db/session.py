@@ -88,6 +88,13 @@ async def init_db() -> None:
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_incoming_upi_payments_utr ON incoming_upi_payments (utr)"
         ))
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS bot_settings ("
+            "key VARCHAR(64) PRIMARY KEY, "
+            "value TEXT NOT NULL"
+            ")"
+        ))
+
 
 
 # V5 tables are created by Base.metadata.create_all above.

@@ -48,11 +48,17 @@ def categories_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def product_list_kb(products: list[Product], stock_counts: dict[int, int] | None = None) -> InlineKeyboardMarkup:
+def product_list_kb(
+    products: list[Product],
+    stock_counts: dict[int, int] | None = None,
+    hide_out_of_stock: bool = False,
+) -> InlineKeyboardMarkup:
     stock_counts = stock_counts or {}
     rows = []
     for p in products:
         stock = int(stock_counts.get(p.id, 0))
+        if hide_out_of_stock and stock <= 0:
+            continue
         if stock > 0:
             label = f"🟢 {p.name} — ${float(p.price):.2f} | Stock: {stock}"
         else:
@@ -63,6 +69,7 @@ def product_list_kb(products: list[Product], stock_counts: dict[int, int] | None
         [InlineKeyboardButton(text="🏠 Home", callback_data="home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 def product_kb(
