@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import io
 from datetime import datetime, timedelta, timezone
@@ -8,6 +10,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import repo
