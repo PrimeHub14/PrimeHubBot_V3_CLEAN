@@ -25,6 +25,7 @@ class User(Base):
     source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_meta_lead_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meta_followup_step: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

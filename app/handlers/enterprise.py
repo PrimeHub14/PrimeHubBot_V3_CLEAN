@@ -252,10 +252,13 @@ async def admin_section(call: CallbackQuery):
 async def broadcast_start(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id): return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Everyone",callback_data="v5broadcast:all")],
-        [InlineKeyboardButton(text="💎 VIP",callback_data="v5broadcast:vip")],
-        [InlineKeyboardButton(text="🛍 Previous Buyers",callback_data="v5broadcast:buyers")],
-        [InlineKeyboardButton(text="🎁 Referral Users",callback_data="v5broadcast:referrers")],
+        [InlineKeyboardButton(text="👥 Everyone", callback_data="v5broadcast:all")],
+        [InlineKeyboardButton(text="💰 Wallet Balance Holders", callback_data="v5broadcast:wallet")],
+        [InlineKeyboardButton(text="🛒 Cart Abandoners (Unpaid)", callback_data="v5broadcast:abandoned")],
+        [InlineKeyboardButton(text="🔴 Never Purchased (New Leads)", callback_data="v5broadcast:nonbuyers")],
+        [InlineKeyboardButton(text="🛍 Previous Buyers", callback_data="v5broadcast:buyers")],
+        [InlineKeyboardButton(text="💎 VIP", callback_data="v5broadcast:vip")],
+        [InlineKeyboardButton(text="🎁 Referral Users", callback_data="v5broadcast:referrers")],
     ])
     await message.answer("📢 Choose broadcast audience:", reply_markup=kb)
 

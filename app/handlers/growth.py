@@ -193,6 +193,10 @@ def render_promotools_view() -> tuple[str, InlineKeyboardMarkup]:
                 InlineKeyboardButton(text="🎁 Gemini AI Special Offer", callback_data="admin_promo:gemini"),
             ],
             [
+                InlineKeyboardButton(text="📋 Pro Plus (Zero Emojis)", callback_data="admin_promo:proplus"),
+                InlineKeyboardButton(text="🌍 Buy & Sell Worldwide ($)", callback_data="admin_promo:buynsell"),
+            ],
+            [
                 InlineKeyboardButton(text="🔔 Restock Alert Template", callback_data="admin_promo:restock"),
                 InlineKeyboardButton(text="⭐ Reviews & Proof Post", callback_data="admin_promo:proof"),
             ],
@@ -560,8 +564,67 @@ async def cb_promo_proof(call: CallbackQuery):
     await call.message.answer(f"📋 <b>Copy & Paste Trust & Reviews Post:</b>\n\n{post}", parse_mode="HTML")
 
 
+@router.callback_query(F.data == "admin_promo:proplus")
+async def cb_promo_proplus(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer("📋 Pro Plus template ready!")
+    post = (
+        "Prime Hub Digital Subscriptions Store\n\n"
+        "Available Services:\n"
+        "- ChatGPT Plus 1 Month Private Account: $9 / 749 INR\n"
+        "- Claude Pro 1 Month Private Account: $10 / 849 INR\n"
+        "- Gemini AI Pro 18 Months: $12 / 999 INR\n"
+        "- Coursera Plus 12 Months Premium: $14 / 1199 INR\n"
+        "- Canva Pro Lifetime / Annual: $5 / 399 INR\n"
+        "- GitHub Copilot Pro: $7 / 599 INR\n"
+        "- YouTube Premium 12 Months Family / Individual: $8 / 699 INR\n\n"
+        "All subscriptions come with full replacement warranty and 24/7 instant delivery.\n"
+        "Automated store bot link and instant support available in my profile bio."
+    )
+    await call.message.answer(
+        "📋 <b>Group 1: Pro Plus (Zero Emojis, Bio Link):</b>\n"
+        "<i>Tap the text below to copy instantly:</i>\n\n"
+        f"<code>{escape(post)}</code>",
+        parse_mode="HTML",
+    )
 
-@router.message(Command("analytics"))
+
+@router.callback_query(F.data == "admin_promo:buynsell")
+async def cb_promo_buynsell(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    bot_user = getattr(settings, "TELEGRAM_BOT_USERNAME", "PrimeHubUs_Bot")
+    await call.answer("⚡ Buy & Sell template ready!")
+    post = (
+        "⚡ PRIME HUB — 24/7 AUTOMATED SUBSCRIPTION STORE ⚡\n\n"
+        "🔥 Instant Automated Delivery | Full Warranty | 24/7 Support 🔥\n\n"
+        "💎 AI & Dev Tools:\n"
+        "• Gemini AI Pro (18 Months) — $1.80 / ₹149 (Flash Offer)\n"
+        "• ChatGPT Plus Private Account — $8.99\n"
+        "• Claude Pro 1 Month — $9.99\n"
+        "• GitHub Copilot Pro — $6.99\n"
+        "• Cursor Pro / JetBrains All Products\n\n"
+        "🎓 Education & Streaming:\n"
+        "• Coursera Plus 12 Months — $13.99\n"
+        "• YouTube Premium 12 Months — $7.99\n"
+        "• Canva Pro Unlimited — $4.99\n"
+        "• Spotify Premium Annual — $5.99\n\n"
+        "💳 Payments Accepted: UPI / Paytm / Crypto (USDT / TON / BTC) / Cards\n"
+        f"🤖 Instant Store Bot: @{bot_user}\n"
+        "📩 Live Support: Link in bot or DM"
+    )
+    await call.message.answer(
+        "⚡ <b>Group 2: Buy & Sell Worldwide (USD / 2-Min Post):</b>\n"
+        "<i>Tap the text below to copy instantly:</i>\n\n"
+        f"<code>{escape(post)}</code>",
+        parse_mode="HTML",
+    )
+
+
+
 async def analytics_command(message: Message):
     if not is_admin(message.from_user.id):
         return

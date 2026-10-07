@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from html import escape
 import logging
 import re
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -101,7 +102,11 @@ def admin_main_dashboard_kb(hide_oos: bool = False) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="📊 Growth & Sales KPI", callback_data="admin_nav:growth"),
+                InlineKeyboardButton(text="👥 Customer Analytics", callback_data="admin_nav:customers"),
+            ],
+            [
                 InlineKeyboardButton(text="📦 Out-of-Stock Manager", callback_data="admin_nav:oos"),
+                InlineKeyboardButton(text="💰 Wallet Users", callback_data="admin_nav:walletusers"),
             ],
             [
                 InlineKeyboardButton(text="🚀 Viral Promo Tools", callback_data="admin_nav:promotools"),
@@ -116,7 +121,10 @@ def admin_main_dashboard_kb(hide_oos: bool = False) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🔄 Check Restock Now", callback_data="admin_nav:checkrestock"),
             ],
             [
+                InlineKeyboardButton(text="🚫 Blocked Users", callback_data="admin_nav:blockedusers"),
                 InlineKeyboardButton(text="📢 Broadcast to Users", callback_data="admin_nav:broadcast"),
+            ],
+            [
                 InlineKeyboardButton(text="✖ Close", callback_data="admin_nav:close"),
             ],
         ]
@@ -233,6 +241,15 @@ async def admin(message: Message):
         "/sources - Traffic acquisition & revenue per channel\n"
         "/hotdemand - High-demand out-of-stock items customers want\n"
         "/leads - Recover abandoned / unpaid orders\n\n"
+        "👥 <b>Customer Analytics & Retargeting:</b>\n"
+        "/customers - Sales funnel metrics (Buyers, Cart Abandoners, Non-Buyers)\n"
+        "/walletusers - View users with unspent wallet balances\n"
+        "/block USER_ID [reason] - Suspend user from bot\n"
+        "/unblock USER_ID - Unblock/restore user\n"
+        "/blockedusers - List all suspended users\n"
+        "/broadcast_wallet MESSAGE - Send special deal to wallet balance holders\n"
+        "/broadcast_abandoned MESSAGE - Send discount note to cart abandoners\n"
+        "/broadcast_nonbuyers MESSAGE - Send welcome note to users who haven't ordered\n\n"
         "📢 <b>Broadcasts & Support:</b>\n"
         "/announceproduct PRODUCT_ID - Announce new product to channels\n"
         "/announcerestock PRODUCT_ID [UNITS] - Send restock alert to channels & subscribers\n"
@@ -242,6 +259,7 @@ async def admin(message: Message):
         "/ticketsadmin - Open support tickets\n"
         "/replyticket ID MESSAGE - Reply to a ticket\n\n"
         "🌐 <b>VenteBot Integration:</b>\n"
+        "/venterecheck ORDER_ID - Check status & auto-deliver pending activation order\n"
         "/ventestatus - Overview of all products & live link status\n"
         "/ventelist [search] - Browse & search VenteBot products\n"
         "/ventefile - Download full catalogue as .txt file\n"
@@ -1535,12 +1553,14 @@ async def render_order_card(session: AsyncSession, order_id: int) -> tuple[str, 
         snippet = str(order.delivery_record)[:120] + "..." if len(str(order.delivery_record)) > 120 else str(order.delivery_record)
         lines.append(f"🎁 Delivered Content:\n<code>{escape(snippet)}</code>")
 
+    user_blocked = getattr(user, "is_blocked", False) if user else False
     lines.extend([
         "",
         f"👤 <b>Customer Details:</b>",
         f"• Name: <b>{escape(customer_name)}</b>",
         f"• Username: <b>{escape(username)}</b>",
         f"• Telegram ID: <code>{order.user_id}</code>",
+        f"• Account Status: <b>{'🔴 SUSPENDED' if user_blocked else '🟢 Active'}</b>",
         "━━━━━━━━━━━━━━━━━━━━",
     ])
 
@@ -1551,8 +1571,19 @@ async def render_order_card(session: AsyncSession, order_id: int) -> tuple[str, 
     else:
         buttons.append([InlineKeyboardButton(text="🔄 Force Re-deliver", callback_data=f"adminforcedeliver:{order.id}")])
 
+    if order.supplier_source == "ventebot":
+        buttons.append([InlineKeyboardButton(text="🔄 Re-Check VenteBot Status", callback_data=f"venterecheck:{order.id}")])
+
+    action_row = []
+    if user_blocked:
+        action_row.append(InlineKeyboardButton(text="✅ Unblock User", callback_data=f"admin_unblock_user:{order.user_id}"))
+    else:
+        action_row.append(InlineKeyboardButton(text="🚫 Block User", callback_data=f"admin_block_user:{order.user_id}"))
+
+    action_row.append(InlineKeyboardButton(text="💬 Message Customer", url=f"tg://user?id={order.user_id}"))
+    buttons.append(action_row)
+
     buttons.append([
-        InlineKeyboardButton(text="💬 Message Customer", url=f"tg://user?id={order.user_id}"),
         InlineKeyboardButton(text="🔙 Back to Orders", callback_data="refreshadminorders"),
     ])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -2751,6 +2782,395 @@ async def announce_restock_command(message: Message):
         f"📢 Channels/groups broadcast: <b>{chats_notified}</b>",
         parse_mode="HTML",
     )
+
+
+# ---------------------------------------------------------
+# VenteBot Order Re-check & Activation Handlers
+# ---------------------------------------------------------
+
+@router.message(Command("venterecheck"))
+async def venterecheck_cmd(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/venterecheck ORDER_ID</code>", parse_mode="HTML")
+        return
+    order_id = int(parts[1])
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await message.answer(f"❌ Order #{order_id} not found.")
+            return
+        from app.services.delivery import recheck_and_deliver_ventebot
+        success, info = await recheck_and_deliver_ventebot(message.bot, session, order)
+    await message.answer(f"🔍 <b>VenteBot Re-check Result for Order #{order_id}:</b>\n\n{info}", parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("venterecheck:"))
+async def cb_venterecheck(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    order_id = int(call.data.split(":")[1])
+    await call.answer("Checking VenteBot status...")
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await call.message.answer(f"❌ Order #{order_id} not found.")
+            return
+        from app.services.delivery import recheck_and_deliver_ventebot
+        success, info = await recheck_and_deliver_ventebot(call.bot, session, order)
+    await call.message.answer(f"🔍 <b>VenteBot Re-check (Order #{order_id}):</b>\n\n{info}", parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("admin_order_inspect:"))
+async def cb_admin_order_inspect(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    order_id = int(call.data.split(":")[1])
+    await call.answer()
+    async with SessionLocal() as session:
+        text, markup = await render_order_card(session, order_id)
+    await call.message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+# ---------------------------------------------------------
+# User Suspension & Ban Protection Handlers (Admin Only)
+# ---------------------------------------------------------
+
+@router.message(Command("block"))
+async def block_user_cmd(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/block TELEGRAM_USER_ID [reason]</code>", parse_mode="HTML")
+        return
+    target_id = int(parts[1])
+    reason = parts[2] if len(parts) > 2 else "Unusual activity / Admin decision"
+    async with SessionLocal() as session:
+        success = await repo.block_user(session, target_id)
+        await repo.audit_log(session, message.from_user.id, "block_user", f"Blocked user {target_id}. Reason: {reason}")
+    if success:
+        await message.answer(
+            f"🚫 <b>User Suspended</b>\n\n"
+            f"• Telegram ID: <code>{target_id}</code>\n"
+            f"• Reason: <b>{escape(reason)}</b>\n\n"
+            "This user can no longer view products, place orders, or access the bot.",
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(f"❌ User <code>{target_id}</code> not found in database.", parse_mode="HTML")
+
+
+@router.message(Command("unblock"))
+async def unblock_user_cmd(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/unblock TELEGRAM_USER_ID</code>", parse_mode="HTML")
+        return
+    target_id = int(parts[1])
+    async with SessionLocal() as session:
+        success = await repo.unblock_user(session, target_id)
+        await repo.audit_log(session, message.from_user.id, "unblock_user", f"Unblocked user {target_id}")
+    if success:
+        await message.answer(f"✅ User <code>{target_id}</code> has been unblocked. Full access restored.", parse_mode="HTML")
+    else:
+        await message.answer(f"❌ User <code>{target_id}</code> not found in database.", parse_mode="HTML")
+
+
+@router.message(Command("blockedusers"))
+async def blocked_users_cmd(message: Message):
+    if not admin_only(message):
+        return
+    async with SessionLocal() as session:
+        users = await repo.list_blocked_users(session, limit=50)
+    if not users:
+        await message.answer("🎉 <i>No users are currently blocked or suspended.</i>", parse_mode="HTML")
+        return
+    text = f"🚫 <b>Suspended / Blocked Users ({len(users)}):</b>\n\n"
+    buttons = []
+    for u in users:
+        uname = f"@{u.username}" if u.username else "No username"
+        fname = escape(u.first_name or "User")
+        text += f"• <b>{fname}</b> ({uname}) — <code>{u.id}</code>\n"
+        buttons.append([InlineKeyboardButton(text=f"✅ Unblock {u.id}", callback_data=f"admin_unblock_user:{u.id}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Admin Menu", callback_data="admin_nav:main")])
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("admin_block_user:"))
+async def cb_admin_block_user(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    target_id = int(call.data.split(":")[1])
+    async with SessionLocal() as session:
+        await repo.block_user(session, target_id)
+        await repo.audit_log(session, call.from_user.id, "block_user", f"Blocked user {target_id}")
+    await call.answer("🚫 User suspended!", show_alert=True)
+    await call.message.answer(f"🚫 User <code>{target_id}</code> has been suspended from Prime Hub.", parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("admin_unblock_user:"))
+async def cb_admin_unblock_user(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    target_id = int(call.data.split(":")[1])
+    async with SessionLocal() as session:
+        await repo.unblock_user(session, target_id)
+        await repo.audit_log(session, call.from_user.id, "unblock_user", f"Unblocked user {target_id}")
+    await call.answer("✅ User unblocked!", show_alert=True)
+    await call.message.answer(f"✅ User <code>{target_id}</code> access restored.", parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:blockedusers")
+async def cb_admin_nav_blockedusers(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    async with SessionLocal() as session:
+        users = await repo.list_blocked_users(session, limit=50)
+    if not users:
+        await call.message.answer(
+            "🎉 <i>No users are currently blocked or suspended.</i>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Admin Menu", callback_data="admin_nav:main")]]),
+            parse_mode="HTML"
+        )
+        return
+    text = f"🚫 <b>Suspended / Blocked Users ({len(users)}):</b>\n\n"
+    buttons = []
+    for u in users:
+        uname = f"@{u.username}" if u.username else "No username"
+        fname = escape(u.first_name or "User")
+        text += f"• <b>{fname}</b> ({uname}) — <code>{u.id}</code>\n"
+        buttons.append([InlineKeyboardButton(text=f"✅ Unblock {u.id}", callback_data=f"admin_unblock_user:{u.id}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Admin Menu", callback_data="admin_nav:main")])
+    await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+
+
+# ---------------------------------------------------------
+# Customer Analytics, Wallet Management & Retargeting
+# ---------------------------------------------------------
+
+async def render_customer_analytics_view(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
+    data = await repo.get_customer_segments_summary(session)
+    inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+    wallet_inr = int(round(data["wallet_total_usd"] * inr_rate))
+
+    text = (
+        "👥 <b>Prime Hub Customer Analytics & Retargeting Funnel</b>\n\n"
+        f"📊 <b>Total Registered Users:</b> <b>{data['total_users']}</b>\n"
+        f"🚫 <b>Suspended Users:</b> <b>{data['blocked_users']}</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🎯 <b>Customer Funnel Segments:</b>\n\n"
+        f"🟢 <b>Active Buyers (Purchased >= 1):</b> <b>{data['buyers']}</b> ({data['conversion_rate']:.1f}%)\n"
+        "<i>Customers who successfully paid and received products.</i>\n\n"
+        f"🟡 <b>Cart Abandoners:</b> <b>{data['abandoned']}</b>\n"
+        "<i>Users who initiated an order/checkout but didn't finish payment.</i>\n\n"
+        f"🔴 <b>Never Purchased (Browsers/Leads):</b> <b>{data['never_ordered']}</b>\n"
+        "<i>Users who registered or browsed catalog but never placed an order.</i>\n\n"
+        f"💰 <b>Unspent Wallet Holders:</b> <b>{data['wallet_users']}</b>\n"
+        f"💵 <b>Total Wallet Balance Held:</b> <b>${data['wallet_total_usd']:.2f} (~₹{wallet_inr:,})</b>\n"
+        "<i>Users with deposited funds sitting in their Prime Hub wallet!</i>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📢 <b>Targeted Marketing Actions:</b>\n"
+        "Choose an audience below to send tailored deals and boost sales:"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"💰 Message Wallet Users ({data['wallet_users']})", callback_data="admin_target_broadcast:wallet"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🛒 Message Cart Abandoners ({data['abandoned']})", callback_data="admin_target_broadcast:abandoned"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🎁 Message Non-Buyers ({data['never_ordered']})", callback_data="admin_target_broadcast:nonbuyers"),
+        ],
+        [
+            InlineKeyboardButton(text="📋 View Wallet Users List", callback_data="admin_nav:walletusers"),
+            InlineKeyboardButton(text="🔄 Refresh", callback_data="admin_nav:customers_refresh"),
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Admin Menu", callback_data="admin_nav:main"),
+        ]
+    ])
+    return text, kb
+
+
+@router.message(Command("customers", "funnel", "segments"))
+async def customers_cmd(message: Message):
+    if not admin_only(message):
+        return
+    async with SessionLocal() as session:
+        text, kb = await render_customer_analytics_view(session)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.in_(["admin_nav:customers", "admin_nav:customers_refresh"]))
+async def cb_admin_nav_customers(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    async with SessionLocal() as session:
+        text, kb = await render_customer_analytics_view(session)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await call.message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.message(Command("walletusers"))
+async def walletusers_cmd(message: Message):
+    if not admin_only(message):
+        return
+    async with SessionLocal() as session:
+        users = await repo.list_wallet_users(session, limit=50)
+    inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+    if not users:
+        await message.answer("💰 No users currently have wallet balances > $0.00.")
+        return
+    total_val = sum(float(u.wallet_balance) for u in users)
+    text = (
+        f"💰 <b>Users Holding Wallet Balance ({len(users)} users):</b>\n\n"
+        f"💵 Total Unspent Funds: <b>${total_val:.2f} (~₹{int(round(total_val * inr_rate)):,})</b>\n\n"
+    )
+    for u in users[:25]:
+        u_bal = float(u.wallet_balance)
+        u_inr = int(round(u_bal * inr_rate))
+        uname = f"@{u.username}" if u.username else "No username"
+        fname = escape(u.first_name or "User")
+        text += f"• <b>{fname}</b> ({uname}) [<code>{u.id}</code>]: <b>${u_bal:.2f} (~₹{u_inr:,})</b>\n"
+    if len(users) > 25:
+        text += f"\n<i>...and {len(users) - 25} more.</i>\n"
+    text += "\n💡 <i>Tip: Run <code>/broadcast_wallet Your special offer</code> to help them spend their balance!</i>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Send Offer to Wallet Holders", callback_data="admin_target_broadcast:wallet")],
+        [InlineKeyboardButton(text="🔙 Customer Analytics", callback_data="admin_nav:customers")],
+    ])
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:walletusers")
+async def cb_admin_nav_walletusers(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    async with SessionLocal() as session:
+        users = await repo.list_wallet_users(session, limit=50)
+    inr_rate = float(getattr(settings, "UPI_INR_PER_USD", 86.5))
+    if not users:
+        await call.message.answer(
+            "💰 No users currently have wallet balances > $0.00.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Customer Analytics", callback_data="admin_nav:customers")]]),
+            parse_mode="HTML"
+        )
+        return
+    total_val = sum(float(u.wallet_balance) for u in users)
+    text = (
+        f"💰 <b>Users Holding Wallet Balance ({len(users)} users):</b>\n\n"
+        f"💵 Total Unspent Funds: <b>${total_val:.2f} (~₹{int(round(total_val * inr_rate)):,})</b>\n\n"
+    )
+    for u in users[:25]:
+        u_bal = float(u.wallet_balance)
+        u_inr = int(round(u_bal * inr_rate))
+        uname = f"@{u.username}" if u.username else "No username"
+        fname = escape(u.first_name or "User")
+        text += f"• <b>{fname}</b> ({uname}) [<code>{u.id}</code>]: <b>${u_bal:.2f} (~₹{u_inr:,})</b>\n"
+    if len(users) > 25:
+        text += f"\n<i>...and {len(users) - 25} more.</i>\n"
+    text += "\n💡 <i>Tip: Run <code>/broadcast_wallet Your offer</code> to help them spend their balance!</i>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Send Offer to Wallet Holders", callback_data="admin_target_broadcast:wallet")],
+        [InlineKeyboardButton(text="🔙 Customer Analytics", callback_data="admin_nav:customers")],
+    ])
+    await call.message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+# ---------------------------------------------------------
+# Segmented Broadcast Execution Handlers
+# ---------------------------------------------------------
+
+async def _send_segmented_broadcast(bot: Bot, admin_id: int, audience: str, content: str, message: Message):
+    async with SessionLocal() as session:
+        ids = await repo.audience_user_ids(session, audience)
+        await repo.audit_log(session, admin_id, f"broadcast_{audience}", f"Recipients={len(ids)}")
+    if not ids:
+        await message.answer(f"⚠️ No active users found in segment '{audience}'.")
+        return
+    await message.answer(f"⏳ Sending targeted note to <b>{len(ids)}</b> users in segment '{audience}'...", parse_mode="HTML")
+    sent = failed = 0
+    for uid in ids:
+        try:
+            await bot.send_message(uid, f"🔔 <b>Prime Hub Special Note</b>\n\n{escape(content)}", parse_mode="HTML")
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.04)
+    await message.answer(f"✅ Segmented Broadcast Complete!\n\n• Target: <b>{audience}</b>\n• Delivered: <b>{sent}</b>\n• Failed/Blocked: <b>{failed}</b>", parse_mode="HTML")
+
+
+@router.message(Command("broadcast_wallet"))
+async def broadcast_wallet_cmd(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Usage: <code>/broadcast_wallet Your special note/offer message here</code>", parse_mode="HTML")
+        return
+    await _send_segmented_broadcast(message.bot, message.from_user.id, "wallet", parts[1].strip(), message)
+
+
+@router.message(Command("broadcast_abandoned"))
+async def broadcast_abandoned_cmd(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Usage: <code>/broadcast_abandoned Your note/coupon for abandoned carts</code>", parse_mode="HTML")
+        return
+    await _send_segmented_broadcast(message.bot, message.from_user.id, "abandoned", parts[1].strip(), message)
+
+
+@router.message(Command("broadcast_nonbuyers"))
+async def broadcast_nonbuyers_cmd(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Usage: <code>/broadcast_nonbuyers Your welcome deal for new users</code>", parse_mode="HTML")
+        return
+    await _send_segmented_broadcast(message.bot, message.from_user.id, "nonbuyers", parts[1].strip(), message)
+
+
+@router.callback_query(F.data.startswith("admin_target_broadcast:"))
+async def cb_admin_target_broadcast(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    aud = call.data.split(":")[1]
+    await call.answer()
+    cmd_name = f"/broadcast_{aud}"
+    await call.message.answer(
+        f"📝 <b>Targeted Campaign to '{aud.upper()}'</b>\n\n"
+        f"To send a special note or offer to this specific group of users, send:\n\n"
+        f"<code>{cmd_name} Your custom message or offer text here</code>\n\n"
+        "💡 <i>Example for Cart Abandoners:</i>\n"
+        f"<code>{cmd_name} Hey! We noticed you left an item in your cart. Complete your purchase today and use code SAVE10 for 10% off!</code>\n\n"
+        "💡 <i>Example for Wallet Balance Holders:</i>\n"
+        f"<code>{cmd_name} Reminder: You have an unspent balance in your Prime Hub wallet! Check out our latest products or top-ups today.</code>",
+        parse_mode="HTML",
+    )
+
 
 
 

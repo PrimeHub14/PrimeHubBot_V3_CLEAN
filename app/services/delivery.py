@@ -6,7 +6,7 @@ import csv
 import io
 
 from aiogram import Bot
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repo
@@ -226,41 +226,156 @@ async def _deliver_ventebot_order(bot: Bot, session: AsyncSession, order: Order,
         customer_reference=f"telegram_user_{order.user_id}",
     )
 
+    v_order_id = (
+        v_order.get("id")
+        or v_order.get("order_id")
+        or (v_order.get("order", {}).get("id") if isinstance(v_order.get("order"), dict) else None)
+        or (v_order.get("data", {}).get("id") if isinstance(v_order.get("data"), dict) else None)
+    )
+    v_status = v_order.get("status") or (v_order.get("order", {}).get("status") if isinstance(v_order.get("order"), dict) else "PROCESSING")
+
     items = v_order.get("items") or []
+    if not items and isinstance(v_order.get("order"), dict):
+        items = v_order.get("order", {}).get("items") or []
+
     text_items = []
     if isinstance(items, list):
         for index, itm in enumerate(items, start=1):
             if isinstance(itm, dict):
-                account_data = itm.get("account_data") or str(itm)
-                text_items.append((index, account_data))
+                account_data = itm.get("account_data") or itm.get("credential") or itm.get("credentials") or itm.get("text")
+                if account_data:
+                    text_items.append((index, str(account_data)))
 
-    if not text_items:
-        status_info = v_order.get("status") or "Processed"
-        text_items.append((1, f"Status: {status_info} (Vente Order #{v_order.get('id')})"))
+    # 1. Instant Stock Delivery (credentials immediately provided by VenteBot)
+    if text_items:
+        rendered = [
+            f"🎁 <b>Item {i} of {len(text_items)}</b>\n┌────────────────\n<code>{escape(content)}</code>\n└────────────────"
+            for i, content in text_items
+        ]
+        await bot.send_message(
+            order.user_id,
+            delivery_header(order)
+            + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+            + "\n\n".join(rendered)
+            + note_block(order)
+            + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.\n🛟 Need help? Open /help and select this order.",
+            parse_mode="HTML",
+        )
 
-    rendered = [
-        f"🎁 <b>Item {i} of {len(text_items)}</b>\n┌────────────────\n<code>{escape(content)}</code>\n└────────────────"
-        for i, content in text_items
-    ]
+        order.delivery_record = "\n\n".join(c for _, c in text_items)
+        order.supplier_source = "ventebot"
+        order.supplier_order_id = str(v_order_id or "")
+        order.supplier_status = str(v_status or "COMPLETED")
+        await mark_delivered(session, order)
+        try:
+            await notify_admins_new_sale(bot, session, order)
+        except Exception:
+            pass
+        return
+
+    # 2. Activation / Provisioning Queue (Activation services like Coursera Plus, Canva, etc.)
+    # DO NOT send dummy "Status: ok" or mark order as delivered!
+    order.supplier_source = "ventebot"
+    order.supplier_order_id = str(v_order_id or "processing")
+    order.supplier_status = str(v_status or "AWAITING_ACTIVATION")
+    order.status = "processing"
+    await session.commit()
+
+    # Inform customer politely with professional activation receipt
     await bot.send_message(
         order.user_id,
-        delivery_header(order)
-        + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
-        + "\n\n".join(rendered)
-        + note_block(order)
-        + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.\n🛟 Need help? Open /help and select this order.",
+        f"⏳ <b>Order #{order.id} — Activation In Progress</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"📦 Product: <b>{escape(order.product.name)}</b>\n"
+        f"🔢 Quantity: <b>{quantity}</b>\n"
+        f"🕒 Placed: <b>{delivery_timestamp(order)}</b>\n"
+        f"⚙️ Status: <b>Provisioning with Supplier</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "<i>Your subscription access / license is being activated in our supplier queue. Once activation is complete, your credentials will appear right here automatically.</i>\n\n"
+        f"{note_block(order)}\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "💛 Thank you for choosing Prime Hub.\n"
+        "🛟 Need instant assistance? Open /help or contact our team.",
         parse_mode="HTML",
     )
 
-    order.delivery_record = "\n\n".join(c for _, c in text_items)
-    order.supplier_source = "ventebot"
-    order.supplier_order_id = str(v_order.get("id") or "")
-    order.supplier_status = str(v_order.get("status") or "COMPLETED")
-    await mark_delivered(session, order)
+    # High-priority alert to Admin with 1-tap re-check and manual delivery buttons
+    admin_text = (
+        f"⚠️ <b>VenteBot Activation Queue — Order #{order.id}</b>\n\n"
+        f"👤 Customer: <code>{order.user_id}</code>\n"
+        f"📦 Product: <b>{escape(order.product.name)}</b>\n"
+        f"🌐 Vente Order ID: <code>{v_order_id or 'Pending'}</code>\n"
+        f"📊 Supplier Status: <code>{v_status}</code>\n\n"
+        "<i>VenteBot is processing this order. Tap below to re-check status or send manual credentials:</i>"
+    )
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Re-Check VenteBot Status", callback_data=f"venterecheck:{order.id}"),
+            InlineKeyboardButton(text="✍️ Deliver Manual", callback_data=f"manualdeliverprompt:{order.id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🔎 Inspect Order Card", callback_data=f"admin_order_inspect:{order.id}"),
+        ]
+    ])
+    for aid in settings.admin_ids:
+        try:
+            await bot.send_message(aid, admin_text, reply_markup=admin_kb, parse_mode="HTML")
+        except Exception:
+            pass
+
+
+async def recheck_and_deliver_ventebot(bot: Bot, session: AsyncSession, order: Order) -> tuple[bool, str]:
+    """Poll VenteBot for updated order status and deliver items if available."""
+    from app.services.ventebot import ventebot_client
+
+    if not order.supplier_order_id or not order.supplier_order_id.isdigit():
+        return False, "No valid VenteBot numeric order ID found on this order."
+
     try:
-        await notify_admins_new_sale(bot, session, order)
-    except Exception:
-        pass
+        v_order = await ventebot_client.get_order(int(order.supplier_order_id))
+    except Exception as exc:
+        return False, f"VenteBot API Error: {exc}"
+
+    v_status = v_order.get("status") or (v_order.get("order", {}).get("status") if isinstance(v_order.get("order"), dict) else "UNKNOWN")
+    items = v_order.get("items") or []
+    if not items and isinstance(v_order.get("order"), dict):
+        items = v_order.get("order", {}).get("items") or []
+
+    text_items = []
+    if isinstance(items, list):
+        for index, itm in enumerate(items, start=1):
+            if isinstance(itm, dict):
+                account_data = itm.get("account_data") or itm.get("credential") or itm.get("credentials") or itm.get("text")
+                if account_data:
+                    text_items.append((index, str(account_data)))
+
+    order.supplier_status = str(v_status)
+
+    if text_items:
+        rendered = [
+            f"🎁 <b>Item {i} of {len(text_items)}</b>\n┌────────────────\n<code>{escape(content)}</code>\n└────────────────"
+            for i, content in text_items
+        ]
+        await bot.send_message(
+            order.user_id,
+            delivery_header(order)
+            + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+            + "\n\n".join(rendered)
+            + note_block(order)
+            + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.\n🛟 Need help? Open /help and select this order.",
+            parse_mode="HTML",
+        )
+        order.delivery_record = "\n\n".join(c for _, c in text_items)
+        await mark_delivered(session, order)
+        try:
+            await notify_admins_new_sale(bot, session, order)
+        except Exception:
+            pass
+        return True, f"✅ Order #{order.id} delivered successfully with {len(text_items)} credentials from VenteBot!"
+
+    await session.commit()
+    return False, f"Order status is: {v_status}. No credentials ready yet from supplier."
+
 
 
 async def _send_stock_items(bot: Bot, session: AsyncSession, order: Order, product: Product, items: list[StockItem]) -> None:

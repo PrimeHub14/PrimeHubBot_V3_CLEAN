@@ -24,6 +24,7 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(100)"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_meta_lead_at TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS meta_followup_step INTEGER DEFAULT 0"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE NOT NULL"))
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_referral_code ON users (referral_code) WHERE referral_code IS NOT NULL"))
 
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR(255) DEFAULT 'Digital Products'"))

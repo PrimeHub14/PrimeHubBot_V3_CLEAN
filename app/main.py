@@ -47,6 +47,10 @@ async def start_bot() -> None:
     bot = Bot(settings.BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
+    from app.utils.security import BlockedUserMiddleware
+    dp.message.outer_middleware(BlockedUserMiddleware())
+    dp.callback_query.outer_middleware(BlockedUserMiddleware())
+
     # Navigation first so global commands work from any active flow.
     dp.include_router(navigation.router)
     dp.include_router(support.router)

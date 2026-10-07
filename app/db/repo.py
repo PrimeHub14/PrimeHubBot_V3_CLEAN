@@ -1018,15 +1018,35 @@ async def inventory_enterprise_summary(session: AsyncSession) -> dict:
 
 
 async def audience_user_ids(session: AsyncSession, audience: str) -> list[int]:
+    paid_subq = (
+        select(Order.user_id)
+        .where(or_(Order.status.in_(["delivered", "paid", "finished", "confirmed"]), Order.delivered.is_(True)))
+        .distinct()
+    )
     if audience == "vip":
-        stmt = select(User.id).where(User.vip_tier.in_(["Silver", "Gold", "Diamond"]))
+        stmt = select(User.id).where(User.vip_tier.in_(["Silver", "Gold", "Diamond"]), User.is_blocked.is_(False))
     elif audience == "buyers":
-        stmt = select(func.distinct(Order.user_id)).where(Order.status == "delivered")
+        stmt = select(func.distinct(Order.user_id)).join(User, User.id == Order.user_id).where(
+            or_(Order.status.in_(["delivered", "paid", "finished", "confirmed"]), Order.delivered.is_(True)),
+            User.is_blocked.is_(False),
+        )
+    elif audience in ("abandoned", "cart"):
+        stmt = select(func.distinct(Order.user_id)).join(User, User.id == Order.user_id).where(
+            Order.user_id.not_in(paid_subq),
+            User.is_blocked.is_(False),
+        )
+    elif audience in ("nonbuyers", "leads", "never_bought"):
+        stmt = select(User.id).where(
+            User.id.not_in(paid_subq),
+            User.is_blocked.is_(False),
+        )
+    elif audience in ("wallet", "balance"):
+        stmt = select(User.id).where(User.wallet_balance > 0, User.is_blocked.is_(False))
     elif audience == "referrers":
-        stmt = select(User.id).where(User.referral_code.is_not(None))
+        stmt = select(User.id).where(User.referral_code.is_not(None), User.is_blocked.is_(False))
     else:
-        stmt = select(User.id)
-    return [int(row[0]) for row in (await session.execute(stmt)).all()]
+        stmt = select(User.id).where(User.is_blocked.is_(False))
+    return [int(row[0]) for row in (await session.execute(stmt)).all() if row[0]]
 
 
 async def schedule_broadcast(session: AsyncSession, audience: str, message: str, scheduled_at):
@@ -1288,6 +1308,90 @@ async def get_abandoned_orders(session: AsyncSession, hours: int = 24) -> list[O
         .order_by(Order.id.desc())
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_customer_segments_summary(session: AsyncSession) -> dict:
+    """Provides high-level customer funnel metrics for admin retargeting."""
+    total_users_cnt = (await session.execute(select(func.count(User.id)))).scalar_one() or 0
+    blocked_users_cnt = (await session.execute(select(func.count(User.id)).where(User.is_blocked.is_(True)))).scalar_one() or 0
+
+    wallet_res = (await session.execute(
+        select(func.count(User.id), func.coalesce(func.sum(User.wallet_balance), 0))
+        .where(User.wallet_balance > 0)
+    )).one()
+    wallet_users_cnt = int(wallet_res[0] or 0)
+    wallet_total_usd = float(wallet_res[1] or 0.0)
+
+    paid_subq = (
+        select(Order.user_id)
+        .where(or_(Order.status.in_(["delivered", "paid", "finished", "confirmed"]), Order.delivered.is_(True)))
+        .distinct()
+    )
+    buyers_cnt = (await session.execute(select(func.count()).select_from(paid_subq.subquery()))).scalar_one() or 0
+
+    ordered_subq = select(Order.user_id).distinct()
+    abandoned_stmt = select(func.count(func.distinct(Order.user_id))).where(Order.user_id.not_in(paid_subq))
+    abandoned_cnt = (await session.execute(abandoned_stmt)).scalar_one() or 0
+
+    never_ordered_stmt = select(func.count(User.id)).where(User.id.not_in(ordered_subq))
+    never_ordered_cnt = (await session.execute(never_ordered_stmt)).scalar_one() or 0
+
+    conversion_rate = (buyers_cnt / total_users_cnt * 100) if total_users_cnt > 0 else 0.0
+
+    return {
+        "total_users": total_users_cnt,
+        "blocked_users": blocked_users_cnt,
+        "wallet_users": wallet_users_cnt,
+        "wallet_total_usd": wallet_total_usd,
+        "buyers": buyers_cnt,
+        "abandoned": abandoned_cnt,
+        "never_ordered": never_ordered_cnt,
+        "conversion_rate": conversion_rate,
+    }
+
+
+async def list_wallet_users(session: AsyncSession, limit: int = 50) -> list[User]:
+    """List users holding unspent wallet funds."""
+    stmt = (
+        select(User)
+        .where(User.wallet_balance > 0)
+        .order_by(User.wallet_balance.desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def block_user(session: AsyncSession, user_id: int) -> bool:
+    """Suspend a user from accessing bot products, orders, or broadcasts."""
+    user = await session.get(User, user_id)
+    if not user:
+        return False
+    user.is_blocked = True
+    await session.commit()
+    return True
+
+
+async def unblock_user(session: AsyncSession, user_id: int) -> bool:
+    """Restore access for a suspended user."""
+    user = await session.get(User, user_id)
+    if not user:
+        return False
+    user.is_blocked = False
+    await session.commit()
+    return True
+
+
+async def is_user_blocked(session: AsyncSession, user_id: int) -> bool:
+    """Check if a user is currently suspended."""
+    user = await session.get(User, user_id)
+    return bool(user and user.is_blocked)
+
+
+async def list_blocked_users(session: AsyncSession, limit: int = 50) -> list[User]:
+    """Retrieve list of suspended users."""
+    stmt = select(User).where(User.is_blocked.is_(True)).order_by(User.id.desc()).limit(limit)
+    return list((await session.execute(stmt)).scalars().all())
+
 
 
 

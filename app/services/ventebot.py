@@ -198,6 +198,13 @@ class VenteBotClient:
             raise VenteBotError("Unexpected response format from VenteBot order creation")
         return data
 
+    async def get_order(self, order_id: int) -> dict[str, Any]:
+        """Fetch live status and delivery items for an existing VenteBot order."""
+        data = await self._request("GET", f"/api/reseller/orders/{int(order_id)}")
+        if not isinstance(data, dict):
+            raise VenteBotError("Unexpected response format from VenteBot get_order")
+        return data
+
 
 ventebot_client = VenteBotClient()
 

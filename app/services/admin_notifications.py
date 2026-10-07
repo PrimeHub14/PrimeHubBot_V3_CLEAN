@@ -91,6 +91,9 @@ async def notify_admins_upi_submitted(
                 InlineKeyboardButton(text=f"🔍 View Order #{order.id}", callback_data=f"adminorder:{order.id}"),
                 InlineKeyboardButton(text="❌ Reject", callback_data=f"adminreject:{order.id}"),
             ],
+            [
+                InlineKeyboardButton(text="🚫 Suspend User", callback_data=f"admin_block_user:{order.user_id}"),
+            ],
         ])
 
         for admin_id in settings.admin_ids_set:
