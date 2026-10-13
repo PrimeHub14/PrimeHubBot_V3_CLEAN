@@ -380,12 +380,31 @@ async def growth_referral_callback(call: CallbackQuery):
     await call.answer()
 
 
-@router.callback_query(F.data == "growth:loyalty")
-async def growth_loyalty_callback(call: CallbackQuery):
-    async with SessionLocal() as session:
-        user = await repo.upsert_user(session, call.from_user)
+@router.message(Command("channel"))
+async def channel_command(message: Message):
+    chan_link = settings.channel_link
+    await message.answer(
+        "📢 <b>Prime Hub Official Channel</b>\n\n"
+        "Join our official Telegram channel for exclusive flash sales, restock updates, and coupon codes!\n\n"
+        f"👉 <a href='{chan_link}'>Tap here to join @Primehubus</a>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Open Prime Hub Channel", url=chan_link)],
+            [InlineKeyboardButton(text="🏠 Home", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.in_(["growth:loyalty", "growth:channel"]))
+async def growth_channel_callback(call: CallbackQuery):
+    chan_link = settings.channel_link
     await call.message.answer(
-        f"🏆 <b>Loyalty</b>\n\nPoints: <b>{int(user.loyalty_points or 0)}</b>\nVIP: <b>{user.vip_tier or 'Bronze'}</b>",
+        "📢 <b>Prime Hub Official Channel</b>\n\n"
+        "Join our official Telegram channel for flash sales and daily updates:\n"
+        f"👉 <a href='{chan_link}'>Join Prime Hub Channel</a>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Open Prime Hub Channel", url=chan_link)],
+        ]),
         parse_mode="HTML",
     )
     await call.answer()

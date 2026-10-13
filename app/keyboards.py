@@ -18,7 +18,7 @@ def main_menu_kb(lang: str = "en") -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="🎁 Referral", callback_data="growth:referral"),
-            InlineKeyboardButton(text="🏆 Loyalty", callback_data="growth:loyalty"),
+            InlineKeyboardButton(text="📢 Channel", url=settings.channel_link),
         ],
         [
             InlineKeyboardButton(text="🌍 Language", callback_data="v5:language"),

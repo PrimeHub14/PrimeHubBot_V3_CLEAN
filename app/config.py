@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # Community updates and optional AI assistant
     UPDATE_CHAT_IDS: str = ""
     COMMUNITY_LINK: str = ""
+    TELEGRAM_CHANNEL: str = "Primehubus"
+    CHANNEL_LINK: str = "https://t.me/Primehubus"
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-5-mini"
 
@@ -131,6 +133,17 @@ class Settings(BaseSettings):
     def support_link(self) -> str | None:
         username = self.SUPPORT_USERNAME.strip().lstrip("@")
         return f"https://t.me/{username}" if username else None
+
+    @property
+    def channel_link(self) -> str:
+        value = (self.CHANNEL_LINK or self.COMMUNITY_LINK or "").strip()
+        if not value:
+            chan = self.TELEGRAM_CHANNEL.strip().lstrip("@")
+            return f"https://t.me/{chan}" if chan else "https://t.me/Primehubus"
+        if value.startswith("http://") or value.startswith("https://"):
+            return value
+        return f"https://t.me/{value.lstrip('@')}"
+
 
 
 settings = Settings()
