@@ -117,6 +117,39 @@ async def check_supplier_restocks(bot: Bot) -> list[str]:
 
             _last_known_stock[key] = curr_stock
 
+    # 3. Check Cuppon'sHub linked products
+    try:
+        from app.services.cupponshub import cupponshub_client, get_cupponshub_target_id
+        if cupponshub_client.is_configured():
+            for p in products:
+                ch_key = get_cupponshub_target_id(p)
+                if not ch_key:
+                    continue
+
+                try:
+                    curr_stock = await cupponshub_client.get_stock(ch_key, force_refresh=True)
+                except Exception as exc:
+                    logger.warning(f"Restock check error for cupponshub product {ch_key}: {exc}")
+                    continue
+
+                key = f"cuppon_{p.id}_{ch_key}"
+                if _initialized and key in _last_known_stock:
+                    prev_stock = _last_known_stock[key]
+                    if curr_stock > prev_stock and curr_stock > 0:
+                        added = curr_stock - prev_stock
+                        async with SessionLocal() as session:
+                            total_available = await get_effective_product_stock(session, p, force_refresh=False)
+                        notified = await notify_subscribers_supplier_restock(
+                            bot, p, added, total_available
+                        )
+                        msg = f"Stock added +{added} for #{p.id} {p.name} (notified {notified} users)"
+                        report.append(msg)
+                        logger.info(msg)
+
+                _last_known_stock[key] = curr_stock
+    except Exception as exc:
+        logger.warning(f"Error checking Cuppon'sHub restocks: {exc}")
+
     _initialized = True
     return report
 

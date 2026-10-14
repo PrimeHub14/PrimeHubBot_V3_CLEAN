@@ -4,6 +4,7 @@ from html import escape
 from datetime import timezone
 import csv
 import io
+import time
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -377,6 +378,309 @@ async def recheck_and_deliver_ventebot(bot: Bot, session: AsyncSession, order: O
     return False, f"Order status is: {v_status}. No credentials ready yet from supplier."
 
 
+async def _deliver_cupponshub_order(bot: Bot, session: AsyncSession, order: Order, target_ch_key: str | None = None) -> None:
+    from app.services.cupponshub import cupponshub_client, get_cupponshub_target_id, CupponsHubError
+
+    ch_key = target_ch_key or get_cupponshub_target_id(order.product)
+    if not ch_key:
+        raise RuntimeError(f"Product #{order.product_id} is not linked to a Cuppon'sHub target product key")
+
+    quantity = max(1, order.quantity or 1)
+
+    # 1. SMART FALLBACK: If we have our own local stock in database, sell local stock first!
+    local_available = await repo.available_stock_count(session, order.product.id)
+    if local_available >= quantity:
+        items = await allocate_stock_items(session, order)
+        if len(items) == quantity:
+            try:
+                await _send_stock_items(bot, session, order, order.product, items)
+                order.supplier_source = "local_stock"
+                await mark_delivered(session, order)
+                try:
+                    await notify_admins_new_sale(bot, session, order)
+                except Exception:
+                    pass
+                return
+            except Exception:
+                await release_stock_items(session, order.id)
+                raise
+
+    # 2. Automated checkout via Cuppon'sHub API
+    order.supplier_source = "cupponshub"
+    order.supplier_status = "purchasing"
+    await session.commit()
+
+    try:
+        ch_order = await cupponshub_client.create_order(
+            product_key=ch_key,
+            quantity=quantity,
+            idempotency_key=f"primehub_ord_{order.id}_{int(time.time())}",
+        )
+    except Exception as exc:
+        # Supplier purchase failed (e.g. empty USDT balance, API error, or out of stock)
+        order.supplier_source = "cupponshub"
+        order.supplier_order_id = None
+        order.supplier_status = f"failed: {str(exc)[:100]}"
+        order.status = "processing"
+        await session.commit()
+
+        # Reassure customer politely with professional receipt
+        await bot.send_message(
+            order.user_id,
+            f"⏳ <b>Order #{order.id} — Provisioning In Progress</b>\n"
+            "━━━━━━━━━━━━━━\n"
+            f"📦 Product: <b>{escape(order.product.name)}</b>\n"
+            f"🔢 Quantity: <b>{quantity}</b>\n"
+            f"🕒 Placed: <b>{delivery_timestamp(order)}</b>\n"
+            f"⚙️ Status: <b>Supplier Order In Queue</b>\n"
+            "━━━━━━━━━━━━━━\n\n"
+            "<i>Your order has been recorded and is currently being provisioned. Your credentials will be sent right here as soon as processing completes.</i>\n\n"
+            f"{note_block(order)}\n\n"
+            "━━━━━━━━━━━━━━\n"
+            "💛 Thank you for choosing Prime Hub.\n"
+            "🛟 Need instant assistance? Open /help or contact our team.",
+            parse_mode="HTML",
+        )
+
+        # Notify admin with 1-tap action buttons
+        admin_text = (
+            f"🚨 <b>Cuppon'sHub Checkout Alert — Order #{order.id}</b>\n\n"
+            f"👤 Customer: <code>{order.user_id}</code>\n"
+            f"📦 Product: <b>{escape(order.product.name)}</b> (Key: <code>{ch_key}</code>)\n"
+            f"🔢 Quantity: <b>{quantity}</b>\n"
+            f"⚠️ Reason: <code>{escape(str(exc))}</code>\n\n"
+            f"💡 <i>Tip: Cuppon'sHub wallet balance may need top-up (USDT) or supplier stock refreshed. "
+            f"Top up at cupponhub.shop or deliver credentials manually to user below:</i>"
+        )
+        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔄 Retry Cuppon'sHub Order", callback_data=f"cupponrecheck:{order.id}"),
+                InlineKeyboardButton(text="✍️ Deliver Manual", callback_data=f"manualdeliverprompt:{order.id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🔎 Inspect Order Card", callback_data=f"admin_order_inspect:{order.id}"),
+            ]
+        ])
+        for aid in settings.admin_ids:
+            try:
+                await bot.send_message(aid, admin_text, reply_markup=admin_kb, parse_mode="HTML")
+            except Exception:
+                pass
+        return
+
+    ch_order_id = ch_order.get("id") or ch_order.get("order_id")
+    ch_status = ch_order.get("status") or "completed"
+    items = ch_order.get("items") or []
+
+    text_items = []
+    if isinstance(items, list):
+        for index, itm in enumerate(items, start=1):
+            if isinstance(itm, dict):
+                content = itm.get("item") or itm.get("content") or itm.get("text") or itm.get("account_data") or str(itm)
+            else:
+                content = str(itm).strip()
+            if content:
+                text_items.append((index, content))
+
+    # Instant delivery if items are present
+    if text_items:
+        if len(text_items) >= 5:
+            await bot.send_message(
+                order.user_id,
+                delivery_header(order)
+                + "\n\n📁 <b>Bulk delivery ready</b>\n"
+                + f"Your {len(text_items)} delivery item(s) are attached below as "
+                + "<b>TXT</b> and <b>CSV</b> files so you can download and save them easily."
+                + note_block(order)
+                + "\n\n━━━━━━━━━━━━━━\n"
+                + "💛 Thank you for choosing Prime Hub.",
+                parse_mode="HTML",
+            )
+            await bot.send_document(order.user_id, make_bulk_txt(order, text_items), caption=f"📄 TXT delivery file — Order #{order.id}")
+            await bot.send_document(order.user_id, make_bulk_csv(order, text_items), caption=f"📊 CSV delivery file — Order #{order.id}")
+        else:
+            rendered = [
+                f"🎁 <b>Item {i} of {len(text_items)}</b>\n┌────────────────\n<code>{escape(content)}</code>\n└────────────────"
+                for i, content in text_items
+            ]
+            await bot.send_message(
+                order.user_id,
+                delivery_header(order)
+                + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+                + "\n\n".join(rendered)
+                + note_block(order)
+                + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.\n🛟 Need help? Open /help and select this order.",
+                parse_mode="HTML",
+            )
+
+        order.delivery_record = "\n\n".join(c for _, c in text_items)
+        order.supplier_source = "cupponshub"
+        order.supplier_order_id = str(ch_order_id or "")
+        order.supplier_status = str(ch_status or "completed")
+        await mark_delivered(session, order)
+        try:
+            await notify_admins_new_sale(bot, session, order)
+        except Exception:
+            pass
+        return
+
+    # Provisioning / Activation Queue (if order was accepted by Cuppon'sHub but items are being provisioned)
+    order.supplier_source = "cupponshub"
+    order.supplier_order_id = str(ch_order_id or "processing")
+    order.supplier_status = str(ch_status or "AWAITING_ACTIVATION")
+    order.status = "processing"
+    await session.commit()
+
+    await bot.send_message(
+        order.user_id,
+        f"⏳ <b>Order #{order.id} — Provisioning In Progress</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"📦 Product: <b>{escape(order.product.name)}</b>\n"
+        f"🔢 Quantity: <b>{quantity}</b>\n"
+        f"🕒 Placed: <b>{delivery_timestamp(order)}</b>\n"
+        f"⚙️ Status: <b>Provisioning with Supplier</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "<i>Your subscription access / credentials are being prepared by the supplier. Once ready, they will appear right here automatically.</i>\n\n"
+        f"{note_block(order)}\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "💛 Thank you for choosing Prime Hub.\n"
+        "🛟 Need instant assistance? Open /help or contact our team.",
+        parse_mode="HTML",
+    )
+
+    admin_text = (
+        f"⚠️ <b>Cuppon'sHub Activation Queue — Order #{order.id}</b>\n\n"
+        f"👤 Customer: <code>{order.user_id}</code>\n"
+        f"📦 Product: <b>{escape(order.product.name)}</b> (Key: <code>{ch_key}</code>)\n"
+        f"🌐 Cuppon Order ID: <code>{ch_order_id or 'Pending'}</code>\n"
+        f"📊 Supplier Status: <code>{ch_status}</code>\n\n"
+        "<i>Cuppon'sHub is processing this order. Tap below to re-check status or send manual credentials:</i>"
+    )
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Re-Check Cuppon'sHub Status", callback_data=f"cupponrecheck:{order.id}"),
+            InlineKeyboardButton(text="✍️ Deliver Manual", callback_data=f"manualdeliverprompt:{order.id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🔎 Inspect Order Card", callback_data=f"admin_order_inspect:{order.id}"),
+        ]
+    ])
+    for aid in settings.admin_ids:
+        try:
+            await bot.send_message(aid, admin_text, reply_markup=admin_kb, parse_mode="HTML")
+        except Exception:
+            pass
+
+
+async def recheck_and_deliver_cupponshub(bot: Bot, session: AsyncSession, order: Order) -> tuple[bool, str]:
+    """Poll Cuppon'sHub for updated order status or retry purchase and deliver items."""
+    from app.services.cupponshub import cupponshub_client, get_cupponshub_target_id
+
+    ch_key = get_cupponshub_target_id(order.product)
+    if not ch_key:
+        return False, "This product is not linked to any Cuppon'sHub target key."
+
+    # Case A: If an order ID was already registered with Cuppon'sHub
+    if order.supplier_order_id and not order.supplier_order_id.startswith("processing"):
+        try:
+            ch_order = await cupponshub_client.get_order(order.supplier_order_id)
+        except Exception as exc:
+            return False, f"Cuppon'sHub API Error: {exc}"
+
+        ch_status = ch_order.get("status") or "UNKNOWN"
+        items = ch_order.get("items") or []
+
+        text_items = []
+        if isinstance(items, list):
+            for index, itm in enumerate(items, start=1):
+                if isinstance(itm, dict):
+                    content = itm.get("item") or itm.get("content") or itm.get("text") or itm.get("account_data") or str(itm)
+                else:
+                    content = str(itm).strip()
+                if content:
+                    text_items.append((index, content))
+
+        order.supplier_status = str(ch_status)
+
+        if text_items:
+            rendered = [
+                f"🎁 <b>Item {i} of {len(text_items)}</b>\n┌────────────────\n<code>{escape(content)}</code>\n└────────────────"
+                for i, content in text_items
+            ]
+            await bot.send_message(
+                order.user_id,
+                delivery_header(order)
+                + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+                + "\n\n".join(rendered)
+                + note_block(order)
+                + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.\n🛟 Need help? Open /help and select this order.",
+                parse_mode="HTML",
+            )
+            order.delivery_record = "\n\n".join(c for _, c in text_items)
+            await mark_delivered(session, order)
+            try:
+                await notify_admins_new_sale(bot, session, order)
+            except Exception:
+                pass
+            return True, f"✅ Order #{order.id} delivered successfully with {len(text_items)} credentials from Cuppon'sHub!"
+
+        await session.commit()
+        return False, f"Order status is: {ch_status}. No credentials ready yet from supplier."
+
+    # Case B: Order had failed checkout earlier (e.g. 0 balance), retry purchase now
+    quantity = max(1, order.quantity or 1)
+    try:
+        ch_order = await cupponshub_client.create_order(
+            product_key=ch_key,
+            quantity=quantity,
+            idempotency_key=f"primehub_ord_{order.id}_retry_{int(time.time())}",
+        )
+    except Exception as exc:
+        return False, f"Cuppon'sHub Purchase Error: {exc}"
+
+    ch_order_id = ch_order.get("id") or ch_order.get("order_id")
+    ch_status = ch_order.get("status") or "completed"
+    items = ch_order.get("items") or []
+
+    text_items = []
+    if isinstance(items, list):
+        for index, itm in enumerate(items, start=1):
+            if isinstance(itm, dict):
+                content = itm.get("item") or itm.get("content") or itm.get("text") or itm.get("account_data") or str(itm)
+            else:
+                content = str(itm).strip()
+            if content:
+                text_items.append((index, content))
+
+    order.supplier_order_id = str(ch_order_id or "")
+    order.supplier_status = str(ch_status)
+
+    if text_items:
+        rendered = [
+            f"🎁 <b>Item {i} of {len(text_items)}</b>\n┌────────────────\n<code>{escape(content)}</code>\n└────────────────"
+            for i, content in text_items
+        ]
+        await bot.send_message(
+            order.user_id,
+            delivery_header(order)
+            + "\n\n🔐 <b>Your Delivery Items</b>\n\n"
+            + "\n\n".join(rendered)
+            + note_block(order)
+            + "\n\n━━━━━━━━━━━━━━\n💛 Thank you for choosing Prime Hub.\n🛟 Need help? Open /help and select this order.",
+            parse_mode="HTML",
+        )
+        order.delivery_record = "\n\n".join(c for _, c in text_items)
+        await mark_delivered(session, order)
+        try:
+            await notify_admins_new_sale(bot, session, order)
+        except Exception:
+            pass
+        return True, f"✅ Order #{order.id} purchased and delivered successfully with {len(text_items)} credentials from Cuppon'sHub!"
+
+    await session.commit()
+    return False, f"Cuppon'sHub Order #{ch_order_id} created, status: {ch_status}. Awaiting items."
+
+
 
 async def _send_stock_items(bot: Bot, session: AsyncSession, order: Order, product: Product, items: list[StockItem]) -> None:
     text_items: list[tuple[int, str]] = []
@@ -463,6 +767,12 @@ async def deliver_order(bot: Bot, session: AsyncSession, order: Order) -> None:
     v_target_id = get_ventebot_target_id(product)
     if v_target_id:
         await _deliver_ventebot_order(bot, session, order, v_target_id)
+        return
+
+    from app.services.cupponshub import get_cupponshub_target_id
+    ch_target_id = get_cupponshub_target_id(product)
+    if ch_target_id:
+        await _deliver_cupponshub_order(bot, session, order, ch_target_id)
         return
 
     if is_paglu_product(product.id, product):

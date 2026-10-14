@@ -224,7 +224,18 @@ async def get_effective_product_stock(session, product, force_refresh: bool = Fa
             logger.warning(f"Error fetching VenteBot live stock for #{product.id}: {exc}")
             return 0
 
-    # 2. LootPaglu mapped product
+    # 2. Cuppon'sHub Reseller API product
+    ch_key = getattr(product, "cupponshub_product_id", None)
+    if ch_key:
+        try:
+            from app.services.cupponshub import cupponshub_client
+            if cupponshub_client.is_configured():
+                return await cupponshub_client.get_stock(str(ch_key).strip(), force_refresh=force_refresh)
+        except Exception as exc:
+            logger.warning(f"Error fetching Cuppon'sHub live stock for #{product.id}: {exc}")
+            return 0
+
+    # 3. LootPaglu mapped product
     try:
         from app.services.loot_paglu import is_paglu_product, live_stock
         if is_paglu_product(product.id, product):

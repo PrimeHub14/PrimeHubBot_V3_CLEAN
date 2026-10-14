@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     VENTEBOT_TIMEOUT_SECONDS: int = 15
     VENTEBOT_CACHE_SECONDS: int = 60
 
+    # Cuppon'sHub Reseller API integration
+    CUPPONSHUB_BASE_URL: str = "https://cupponhub.shop/reseller/api"
+    CUPPONSHUB_API_KEY: str = "ch_live_VamK8i2UJQ71s_2uNFUajYUvBV2apIJYa8skAm4pswk"
+    CUPPONSHUB_TIMEOUT_SECONDS: int = 20
+    CUPPONSHUB_CACHE_SECONDS: int = 60
+
     # Direct USDT TRC20 payment verification
     TRC20_RECEIVE_ADDRESS: str = ""
     TRONGRID_API_KEY: str = ""

@@ -35,6 +35,7 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_mode VARCHAR(20) DEFAULT 'instant' NOT NULL"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS ventebot_product_id INTEGER"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS paglu_service_id VARCHAR(50)"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS cupponshub_product_id VARCHAR(100)"))
         # Safely deactivate/remove Vente Services products so only curated custom products appear
         try:
             await conn.execute(text("UPDATE products SET active = FALSE WHERE category = 'Vente Services'"))
@@ -44,8 +45,8 @@ async def init_db() -> None:
             await conn.execute(text("DELETE FROM products WHERE category = 'Vente Services' AND id NOT IN (SELECT product_id FROM orders)"))
         except Exception:
             pass
-        # All products require unique stock before checkout. Existing products become out of stock until /addstock is used.
-        await conn.execute(text("UPDATE products SET stock_enabled = TRUE WHERE stock_enabled IS DISTINCT FROM TRUE"))
+        # All local products require unique stock before checkout. Supplier products manage stock dynamically.
+        await conn.execute(text("UPDATE products SET stock_enabled = TRUE WHERE stock_enabled IS DISTINCT FROM TRUE AND ventebot_product_id IS NULL AND cupponshub_product_id IS NULL AND paglu_service_id IS NULL"))
         # Migrate legacy Paglu_1 service ID to Paglu_8 (Gemini 18 Months Pro on lootpaglu.in)
         try:
             await conn.execute(text("UPDATE products SET paglu_service_id = 'Paglu_8' WHERE paglu_service_id IN ('Paglu_1', 'paglu_1') OR (id = 6 AND (paglu_service_id IS NULL OR paglu_service_id = ''))"))

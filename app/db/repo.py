@@ -317,13 +317,14 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
             and int(product.id) == int(getattr(settings, "VENTEBOT_PRODUCT_ID", 0))
         )
     )
+    is_cupponshub_product = bool(getattr(product, "cupponshub_product_id", None))
     is_reusable_or_manual = bool(
         not getattr(product, "stock_enabled", True)
         or getattr(product, "delivery_mode", "instant") == "manual"
         or bool(getattr(product, "delivery", ""))
     )
 
-    if not is_supplier_product and not is_ventebot_product and not is_reusable_or_manual:
+    if not is_supplier_product and not is_ventebot_product and not is_cupponshub_product and not is_reusable_or_manual:
         available = await available_stock_count(session, product.id)
         if available < quantity:
             raise ValueError(f"Only {available} item(s) are currently available. Please choose a lower quantity.")

@@ -121,6 +121,10 @@ def admin_main_dashboard_kb(hide_oos: bool = False) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🔄 Check Restock Now", callback_data="admin_nav:checkrestock"),
             ],
             [
+                InlineKeyboardButton(text="🤖 Cuppon'sHub Status", callback_data="admin_nav:cupponstatus"),
+                InlineKeyboardButton(text="🛒 Cuppon Catalog", callback_data="admin_nav:cupponlist"),
+            ],
+            [
                 InlineKeyboardButton(text="🚫 Blocked Users", callback_data="admin_nav:blockedusers"),
                 InlineKeyboardButton(text="📢 Broadcast to Users", callback_data="admin_nav:broadcast"),
             ],
@@ -274,8 +278,15 @@ async def admin(message: Message):
         "/paglulink PRIMEHUB_ID SERVICE_ID - Connect product manually\n"
         "/pagluunlink [PRIMEHUB_ID] - Disconnect Paglu bot\n"
         "/paglutest - Test Paglu API connectivity & wallet balance\n\n"
+        "🛒 <b>Cuppon'sHub Bot Integration (@Cupponbot):</b>\n"
+        "/cupponstatus - Overview of all products & live Cuppon stock\n"
+        "/cupponlist [search] - Browse Cuppon products, keys & rates\n"
+        "/cupponlink PRIMEHUB_ID CUPPON_KEY - Link Prime Hub product to Cuppon'sHub\n"
+        "/cupponunlink PRIMEHUB_ID - Unlink product\n"
+        "/cupponme - Check Cuppon'sHub USDT wallet balance & status\n"
+        "/cupponrecheck ORDER_ID - Re-check or retry pending Cuppon order\n\n"
         "🔄 <b>Supplier Stock Monitor (15-min auto):</b>\n"
-        "/checkrestock - Manually check Paglu & VenteBot for new stock & trigger alerts\n\n"
+        "/checkrestock - Manually check Paglu, Vente & Cuppon'sHub for new stock & trigger alerts\n\n"
         "👇 <i>Use interactive buttons below for 1-tap navigation:</i>",
         reply_markup=admin_main_dashboard_kb(hide_oos),
         parse_mode="HTML",
@@ -538,6 +549,82 @@ async def cb_admin_nav_checkrestock(call: CallbackQuery):
     from app.services.restock_monitor import check_and_notify_restocks
     notified = await check_and_notify_restocks(call.bot)
     await call.message.answer(f"🔄 Restock scan complete! Sent alerts for <b>{notified}</b> products.", parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:cupponstatus")
+async def cb_admin_nav_cupponstatus(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    from app.services.cupponshub import cupponshub_client
+    if not cupponshub_client.is_configured():
+        await call.message.answer("⚠️ Cuppon'sHub API Key is not set in Railway.\nPlease add <code>CUPPONSHUB_API_KEY</code>.", parse_mode="HTML")
+        return
+
+    try:
+        balance = await cupponshub_client.get_balance()
+        cuppon_prods = await cupponshub_client.get_products(force_refresh=True)
+    except Exception as exc:
+        await call.message.answer(f"❌ Could not connect to Cuppon'sHub: <code>{exc}</code>", parse_mode="HTML")
+        return
+
+    cuppon_dict = {str(p.get("key", "")).strip(): p for p in cuppon_prods if isinstance(p, dict) and p.get("key")}
+
+    async with SessionLocal() as session:
+        products = await repo.list_products(session, only_active=False)
+
+    lines = [
+        "🤖 <b>Cuppon'sHub Supplier Status (@Cupponbot):</b>\n",
+        f"API URL: <code>{escape(cupponshub_client.base_url)}</code>",
+        f"Wallet Balance: <b>${balance:.2f} USDT</b>",
+        f"Wholesale Catalog: <b>{len(cuppon_prods)} products</b>\n",
+    ]
+    linked_count = 0
+    for p in products:
+        ch_key = getattr(p, "cupponshub_product_id", None)
+        if ch_key and str(ch_key).strip() in cuppon_dict:
+            linked_count += 1
+            cp = cuppon_dict[str(ch_key).strip()]
+            stock_val = cp.get("stock", 0)
+            lines.append(f"• <b>#{p.id} {escape(p.name)}</b> ➔ <code>{escape(str(ch_key))}</code> ({stock_val} in stock)")
+
+    lines.append(f"\nTotal Linked Products: <b>{linked_count}</b>\n")
+    lines.append("Commands:")
+    lines.append("/cupponlist - View all products, keys & live stock")
+    lines.append("/cupponlink PRIMEHUB_ID CUPPON_KEY - Link product")
+    lines.append("/cupponme - View account status")
+
+    await call.message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:cupponlist")
+async def cb_admin_nav_cupponlist(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    from app.services.cupponshub import cupponshub_client
+    if not cupponshub_client.is_configured():
+        await call.message.answer("⚠️ Set <code>CUPPONSHUB_API_KEY</code> in Railway first.", parse_mode="HTML")
+        return
+    try:
+        products = await cupponshub_client.get_products(force_refresh=False)
+        lines = [
+            f"🛒 <b>Cuppon'sHub Catalog</b> ({len(products)} products)\n"
+            "━━━━━━━━━━━━━━━━━━━━━━"
+        ]
+        for p in products[:25]:
+            key = p.get("key", "")
+            name = p.get("name", "Unknown")
+            stock = p.get("stock", 0)
+            price = p.get("price_usdt_from") or p.get("price_usdt") or 0.0
+            stock_str = f"🟢 {stock}" if stock and int(stock) > 0 else "🔴 0"
+            lines.append(f"• <b>{escape(str(name))}</b> (${float(price):.2f} USDT, {stock_str})\n  Key: <code>{escape(str(key))}</code>")
+        lines.append("\n👉 Link with: <code>/cupponlink PRIMEHUB_ID CUPPON_KEY</code>")
+        await call.message.answer("\n".join(lines), parse_mode="HTML")
+    except Exception as exc:
+        await call.message.answer(f"❌ Error fetching catalogue: <code>{exc}</code>", parse_mode="HTML")
 
 
 @router.callback_query(F.data == "admin_nav:broadcast")
@@ -1573,6 +1660,9 @@ async def render_order_card(session: AsyncSession, order_id: int) -> tuple[str, 
 
     if order.supplier_source == "ventebot":
         buttons.append([InlineKeyboardButton(text="🔄 Re-Check VenteBot Status", callback_data=f"venterecheck:{order.id}")])
+
+    if order.supplier_source == "cupponshub":
+        buttons.append([InlineKeyboardButton(text="🔄 Re-Check Cuppon'sHub Status", callback_data=f"cupponrecheck:{order.id}")])
 
     action_row = []
     if user_blocked:
@@ -2834,6 +2924,273 @@ async def cb_admin_order_inspect(call: CallbackQuery):
     async with SessionLocal() as session:
         text, markup = await render_order_card(session, order_id)
     await call.message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+# ---------------------------------------------------------
+# Cuppon'sHub Integration Handlers (@Cupponbot)
+# ---------------------------------------------------------
+
+@router.message(Command("cupponstatus"))
+async def cuppon_status_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.cupponshub import cupponshub_client
+    if not cupponshub_client.is_configured():
+        await message.answer("⚠️ Cuppon'sHub API Key is not set.\nPlease set <code>CUPPONSHUB_API_KEY</code> in Railway.", parse_mode="HTML")
+        return
+
+    try:
+        balance = await cupponshub_client.get_balance()
+        cuppon_prods = await cupponshub_client.get_products(force_refresh=True)
+    except Exception as exc:
+        await message.answer(f"❌ Could not connect to Cuppon'sHub: <code>{exc}</code>", parse_mode="HTML")
+        return
+
+    cuppon_dict = {str(p.get("key", "")).strip(): p for p in cuppon_prods if isinstance(p, dict) and p.get("key")}
+
+    async with SessionLocal() as session:
+        products = await repo.list_products(session, only_active=False)
+
+    if not products:
+        await message.answer("No products found in Prime Hub database.")
+        return
+
+    lines = [
+        "📊 <b>Prime Hub ⟷ Cuppon'sHub Integration Status</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"💰 Cuppon'sHub Wallet: <b>${balance:.2f} USDT</b>",
+        f"📦 Available Wholesale Catalog: <b>{len(cuppon_prods)} products</b>\n",
+    ]
+    linked_active = 0
+    linked_out_of_stock = 0
+
+    for p in products:
+        ch_key = getattr(p, "cupponshub_product_id", None)
+        if ch_key and str(ch_key).strip() in cuppon_dict:
+            cp = cuppon_dict[str(ch_key).strip()]
+            cp_name = cp.get("name", "Unknown")
+            cp_stock = cp.get("stock")
+            stock_val = 0 if cp_stock is None else int(cp_stock)
+            stock_str = "Unlimited" if cp_stock is None else f"{stock_val} in stock"
+            cp_cost = cp.get("price_usdt_from") or cp.get("price_usdt") or 0.0
+
+            if stock_val > 0:
+                linked_active += 1
+                icon = "🟢"
+            else:
+                linked_out_of_stock += 1
+                icon = "🔴"
+
+            lines.append(
+                f"{icon} <b>#{p.id} {escape(p.name)}</b> (${float(p.price):.2f})\n"
+                f"   ↳ Key: <code>{escape(str(ch_key))}</code> ({escape(str(cp_name))})\n"
+                f"   ↳ Supplier Stock: <b>{stock_str}</b> (Wholesale: ${float(cp_cost):.2f} USDT)\n"
+            )
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"🟢 Active in Stock: <b>{linked_active}</b> | 🔴 Out of Stock: <b>{linked_out_of_stock}</b>\n")
+    lines.append("💡 <b>Quick Linking Commands:</b>")
+    lines.append("• <code>/cupponlink PRIMEHUB_ID CUPPON_KEY</code> — Link product")
+    lines.append("• <code>/cupponunlink PRIMEHUB_ID</code> — Unlink product")
+    lines.append("• <code>/cupponlist [search]</code> — Search catalog & copy keys")
+    lines.append("• <code>/cupponme</code> — Check account & balance")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("cupponlink"))
+async def cuppon_link_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 3 or not parts[1].isdigit():
+        await message.answer(
+            "<b>Usage:</b>\n<code>/cupponlink PRIMEHUB_ID CUPPON_KEY</code>\n\n"
+            "<i>Example:</i>\n<code>/cupponlink 5 coursera_premium_12_months</code>\n\n"
+            "💡 Use <code>/cupponlist</code> to browse all available product keys.",
+            parse_mode="HTML",
+        )
+        return
+
+    primehub_id = int(parts[1])
+    cuppon_key = parts[2].strip()
+
+    from app.services.cupponshub import cupponshub_client
+    catalog_item = None
+    if cupponshub_client.is_configured():
+        try:
+            prods = await cupponshub_client.get_products()
+            catalog_item = next((p for p in prods if str(p.get("key", "")).strip() == cuppon_key), None)
+        except Exception:
+            pass
+
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, primehub_id)
+        if not product:
+            await message.answer(f"❌ Prime Hub product #{primehub_id} not found.")
+            return
+
+        product.cupponshub_product_id = cuppon_key
+        product.stock_enabled = False
+        product.delivery_mode = "instant"
+        await session.commit()
+
+    cost_str = f"${float(catalog_item.get('price_usdt_from') or catalog_item.get('price_usdt') or 0):.2f} USDT" if catalog_item else "N/A"
+    stock_str = str(catalog_item.get("stock", "Unknown")) if catalog_item else "Live"
+
+    await message.answer(
+        f"✅ <b>Linked to Cuppon'sHub Successfully!</b>\n\n"
+        f"📦 Prime Hub Product: <b>{escape(product.name)}</b> (<code>#{primehub_id}</code>)\n"
+        f"🔑 Cuppon Key: <code>{escape(cuppon_key)}</code>\n"
+        f"💰 Wholesale Rate: <b>{cost_str}</b>\n"
+        f"📊 Live Stock: <b>{stock_str}</b>\n"
+        f"🏷️ Your Selling Price: <b>${float(product.price):.2f} USD</b>\n\n"
+        "⚡ <i>Live stock and automated delivery are now connected!</i>",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("cupponunlink"))
+async def cuppon_unlink_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/cupponunlink PRIMEHUB_PRODUCT_ID</code>\nExample: <code>/cupponunlink 5</code>", parse_mode="HTML")
+        return
+    primehub_id = int(parts[1])
+    async with SessionLocal() as session:
+        product = await repo.get_product(session, primehub_id)
+        if not product:
+            await message.answer(f"❌ Product #{primehub_id} not found.")
+            return
+        product.cupponshub_product_id = None
+        await session.commit()
+    await message.answer(f"✅ Product #{primehub_id} (<b>{escape(product.name)}</b>) unlinked from Cuppon'sHub.", parse_mode="HTML")
+
+
+@router.message(Command("cupponlist"))
+async def cuppon_list_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.cupponshub import cupponshub_client
+    if not cupponshub_client.is_configured():
+        await message.answer("⚠️ Set <code>CUPPONSHUB_API_KEY</code> in Railway first.", parse_mode="HTML")
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    query = parts[1].strip() if len(parts) > 1 else ""
+
+    try:
+        products = await cupponshub_client.get_products(force_refresh=True)
+        if not products:
+            await message.answer("No products returned from Cuppon'sHub.")
+            return
+
+        if query:
+            q_lower = query.lower()
+            filtered = [
+                p for p in products
+                if q_lower in str(p.get("name", "")).lower()
+                or q_lower in str(p.get("key", "")).lower()
+                or q_lower in str(p.get("description", "")).lower()
+            ]
+            if not filtered:
+                await message.answer(f"🔍 No Cuppon'sHub products found matching <b>'{escape(query)}'</b>.\nType <code>/cupponlist</code> to view all.", parse_mode="HTML")
+                return
+            products = filtered
+
+        lines = [
+            f"🛒 <b>Cuppon'sHub Wholesale Catalog</b> ({len(products)} products)\n"
+            "━━━━━━━━━━━━━━━━━━━━━━"
+        ]
+        for p in products:
+            key = p.get("key", "")
+            name = p.get("name", "Unknown")
+            stock = p.get("stock", 0)
+            price = p.get("price_usdt_from") or p.get("price_usdt") or 0.0
+            stock_str = f"🟢 {stock} in stock" if stock and int(stock) > 0 else "🔴 Out of stock"
+
+            lines.append(
+                f"• <b>{escape(str(name))}</b>\n"
+                f"  🔑 Key: <code>{escape(str(key))}</code>\n"
+                f"  💵 Price: <b>${float(price):.2f} USDT</b> | {stock_str}\n"
+                f"  👉 <code>/cupponlink PRIMEHUB_ID {escape(str(key))}</code>\n"
+            )
+
+        full_text = "\n".join(lines)
+        if len(full_text) > 4000:
+            chunks = [lines[i:i + 15] for i in range(0, len(lines), 15)]
+            for ch in chunks:
+                await message.answer("\n".join(ch), parse_mode="HTML")
+        else:
+            await message.answer(full_text, parse_mode="HTML")
+    except Exception as exc:
+        await message.answer(f"❌ Error fetching Cuppon'sHub catalogue: <code>{exc}</code>", parse_mode="HTML")
+
+
+@router.message(Command("cupponme"))
+async def cuppon_me_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.cupponshub import cupponshub_client
+    if not cupponshub_client.is_configured():
+        await message.answer("⚠️ Set <code>CUPPONSHUB_API_KEY</code> in Railway first.", parse_mode="HTML")
+        return
+    try:
+        balance = await cupponshub_client.get_balance()
+        products = await cupponshub_client.get_products(force_refresh=True)
+        in_stock = sum(1 for p in products if p.get("stock") and int(p.get("stock")) > 0)
+        await message.answer(
+            "🤖 <b>Cuppon'sHub Reseller Account Status</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 USDT Balance: <b>${balance:.2f} USDT</b>\n"
+            f"📦 Total Products: <b>{len(products)}</b> (🟢 {in_stock} in stock)\n"
+            f"🌐 API URL: <code>{cupponshub_client.base_url}</code>\n"
+            f"🤖 Telegram Bot: @Cupponbot\n"
+            f"🖥️ Reseller Panel: https://cupponhub.shop/reseller/panel/\n\n"
+            "⚡ <i>Connected and ready for automated fulfillment!</i>",
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception as exc:
+        await message.answer(f"❌ Failed to connect to Cuppon'sHub: <code>{exc}</code>", parse_mode="HTML")
+
+
+@router.message(Command("cupponrecheck"))
+async def cupponrecheck_cmd(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/cupponrecheck ORDER_ID</code>", parse_mode="HTML")
+        return
+    order_id = int(parts[1])
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await message.answer(f"❌ Order #{order_id} not found.")
+            return
+        from app.services.delivery import recheck_and_deliver_cupponshub
+        success, info = await recheck_and_deliver_cupponshub(message.bot, session, order)
+    await message.answer(f"🔍 <b>Cuppon'sHub Re-check Result for Order #{order_id}:</b>\n\n{info}", parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("cupponrecheck:"))
+async def cb_cupponrecheck(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    order_id = int(call.data.split(":")[1])
+    await call.answer("Checking Cuppon'sHub status...")
+    async with SessionLocal() as session:
+        order = await repo.get_order_with_product(session, order_id)
+        if not order:
+            await call.message.answer(f"❌ Order #{order_id} not found.")
+            return
+        from app.services.delivery import recheck_and_deliver_cupponshub
+        success, info = await recheck_and_deliver_cupponshub(call.bot, session, order)
+    await call.message.answer(f"🔍 <b>Cuppon'sHub Re-check (Order #{order_id}):</b>\n\n{info}", parse_mode="HTML")
 
 
 # ---------------------------------------------------------

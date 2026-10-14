@@ -63,13 +63,25 @@ async def product_stock_map(session, products) -> dict[int, int]:
     except Exception as exc:
         logger.warning(f"Error fetching VenteBot stock map: {exc}")
 
+    cuppon_stock_map: dict[str, int] = {}
+    try:
+        from app.services.cupponshub import cupponshub_client
+        if cupponshub_client.is_configured():
+            cuppon_stock_map = await cupponshub_client.get_all_stock_map()
+    except Exception as exc:
+        logger.warning(f"Error fetching Cuppon'sHub stock map: {exc}")
+
     from app.services.ventebot import get_ventebot_target_id
+    from app.services.cupponshub import get_cupponshub_target_id
 
     local_product_ids = []
     for product in products:
         v_id = get_ventebot_target_id(product)
+        ch_key = get_cupponshub_target_id(product)
         if v_id:
             result[product.id] = vente_stock_map.get(int(v_id), 0)
+        elif ch_key:
+            result[product.id] = cuppon_stock_map.get(str(ch_key).strip(), 0)
         elif not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
             result[product.id] = 999
         else:

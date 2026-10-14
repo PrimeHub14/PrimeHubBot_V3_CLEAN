@@ -64,6 +64,7 @@ class Product(Base):
     delivery_mode: Mapped[str] = mapped_column(String(20), default="instant", nullable=False)
     ventebot_product_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     paglu_service_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    cupponshub_product_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
