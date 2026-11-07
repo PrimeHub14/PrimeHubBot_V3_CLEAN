@@ -55,6 +55,7 @@ async def product_stock_map(session, products) -> dict[int, int]:
     if not products:
         return result
 
+    # 1. Fetch live stock maps from all configured suppliers in fast cached mode
     vente_stock_map: dict[int, int] = {}
     try:
         from app.services.ventebot import ventebot_client
@@ -71,31 +72,49 @@ async def product_stock_map(session, products) -> dict[int, int]:
     except Exception as exc:
         logger.warning(f"Error fetching Cuppon'sHub stock map: {exc}")
 
+    paglu_stock_map: dict[str, int] = {}
+    try:
+        from app.services.loot_paglu import loot_paglu_client
+        if loot_paglu_client.is_configured():
+            paglu_stock_map = await loot_paglu_client.get_all_stock_map()
+    except Exception as exc:
+        logger.warning(f"Error fetching LootPaglu stock map: {exc}")
+
     from app.services.ventebot import get_ventebot_target_id
     from app.services.cupponshub import get_cupponshub_target_id
 
-    local_product_ids = []
+    # 2. Fetch local stock counts for all products in one DB query
+    all_pids = [p.id for p in products]
+    try:
+        local_counts = await repo.available_stock_counts(session, all_pids)
+    except Exception:
+        local_counts = {}
+
+    # 3. Resolve exact stock for every product: Local Stock + Supplier Stock
     for product in products:
+        local = max(0, int(local_counts.get(product.id, 0)))
         v_id = get_ventebot_target_id(product)
         ch_key = get_cupponshub_target_id(product)
-        if v_id:
-            result[product.id] = vente_stock_map.get(int(v_id), 0)
-        elif ch_key:
-            result[product.id] = cuppon_stock_map.get(str(ch_key).strip(), 0)
-        elif not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
+        paglu_sid = getattr(product, "paglu_service_id", None)
+
+        if ch_key:
+            supp = cuppon_stock_map.get(str(ch_key).strip(), 0)
+            result[product.id] = local + max(0, int(supp))
+        elif paglu_sid:
+            supp = paglu_stock_map.get(str(paglu_sid).strip().lower(), 0)
+            result[product.id] = local + max(0, int(supp))
+        elif v_id:
+            supp = vente_stock_map.get(int(v_id), 0)
+            result[product.id] = local + max(0, int(supp))
+        elif local > 0:
+            result[product.id] = local
+        elif getattr(product, "delivery_mode", "instant") == "manual":
+            result[product.id] = 999
+        elif not getattr(product, "stock_enabled", True) and bool(getattr(product, "delivery", "") and str(product.delivery).strip()):
             result[product.id] = 999
         else:
-            local_product_ids.append(product.id)
+            result[product.id] = 0
 
-    if local_product_ids:
-        try:
-            local_counts = await repo.available_stock_counts(session, local_product_ids)
-        except Exception:
-            local_counts = {}
-        prod_by_id = {p.id: p for p in products}
-        for pid in local_product_ids:
-            local = local_counts.get(pid, 0)
-            result[pid] = await live_stock(pid, local, product=prod_by_id.get(pid))
     return result
 
 def format_order_time(value) -> str:
@@ -186,30 +205,14 @@ async def shop(call: CallbackQuery):
 
     async with SessionLocal() as session:
         categories = await repo.list_categories(session)
-        stock_totals, all_stock = await repo.category_stock_totals(session)
-        all_prods = await repo.list_products(session)
+        all_prods = await repo.list_products(session, only_active=True)
+        stock_counts = await product_stock_map(session, all_prods)
+        stock_totals: dict[str, int] = {}
+        all_stock = 0
         for p in all_prods:
-            if p.active and is_paglu_product(p.id, p):
-                local_supplier_stock = await repo.available_stock_count(session, p.id)
-                tot_supplier_stock = await live_stock(p.id, local_supplier_stock, product=p)
-                delta = tot_supplier_stock - local_supplier_stock
-                if delta > 0:
-                    stock_totals[p.category] = max(0, int(stock_totals.get(p.category, 0)) + delta)
-                    all_stock = max(0, int(all_stock) + delta)
-
-        from app.services.ventebot import ventebot_client, get_ventebot_target_id
-        if ventebot_client.is_configured():
-            try:
-                v_map = await ventebot_client.get_all_stock_map()
-                all_prods = await repo.list_products(session)
-                for p in all_prods:
-                    v_id = get_ventebot_target_id(p)
-                    if v_id:
-                        v_stock = v_map.get(v_id, 0)
-                        stock_totals[p.category] = max(0, int(stock_totals.get(p.category, 0)) + v_stock)
-                        all_stock = max(0, int(all_stock) + v_stock)
-            except Exception:
-                pass
+            stk = max(0, int(stock_counts.get(p.id, 0)))
+            stock_totals[p.category] = max(0, int(stock_totals.get(p.category, 0)) + stk)
+            all_stock += stk
     if not categories:
         await call.bot.send_message(call.message.chat.id, "No products are available yet.")
     else:

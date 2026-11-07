@@ -319,9 +319,8 @@ async def create_order(session: AsyncSession, user_id: int, product: Product, cu
     )
     is_cupponshub_product = bool(getattr(product, "cupponshub_product_id", None))
     is_reusable_or_manual = bool(
-        not getattr(product, "stock_enabled", True)
-        or getattr(product, "delivery_mode", "instant") == "manual"
-        or bool(getattr(product, "delivery", ""))
+        getattr(product, "delivery_mode", "instant") == "manual"
+        or (not getattr(product, "stock_enabled", True) and bool(getattr(product, "delivery", "") and str(product.delivery).strip()))
     )
 
     if not is_supplier_product and not is_ventebot_product and not is_cupponshub_product and not is_reusable_or_manual:

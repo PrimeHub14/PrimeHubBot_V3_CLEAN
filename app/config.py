@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     BINANCE_API_BASE_URL: str = "https://api.binance.com"
     BINANCE_PAYMENT_TIMEOUT_MINUTES: int = 30
     BINANCE_POLL_SECONDS: int = 15
-    UPI_ID: str = "paytm.s3p1990@pty"
+    UPI_ID: str = "Q05299307@ybl"
     UPI_NAME: str = "Prime Hub"
     UPI_INR_PER_USD: float = 86.5
 

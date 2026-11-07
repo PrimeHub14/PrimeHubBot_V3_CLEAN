@@ -210,50 +210,68 @@ ventebot_client = VenteBotClient()
 
 
 async def get_effective_product_stock(session, product, force_refresh: bool = False) -> int:
-    """Unified stock calculator for all product types (Local, VenteBot, LootPaglu, Manual)."""
+    """Unified stock calculator for all product types (Local, Cuppon'sHub, LootPaglu, VenteBot, Reusable)."""
     if not product:
         return 0
 
-    # 1. VenteBot Reseller API product
-    v_id = get_ventebot_target_id(product)
-    if v_id:
-        try:
-            if ventebot_client.is_configured():
-                return await ventebot_client.get_stock(v_id, force_refresh=force_refresh)
-        except Exception as exc:
-            logger.warning(f"Error fetching VenteBot live stock for #{product.id}: {exc}")
-            return 0
+    from app.db import repo
+
+    # 1. Check local inventory items in database
+    try:
+        local_stock = max(0, int(await repo.available_stock_count(session, product.id)))
+    except Exception as exc:
+        logger.warning(f"Error getting local stock count for #{product.id}: {exc}")
+        local_stock = 0
+
+    supplier_stock = 0
+    has_supplier = False
 
     # 2. Cuppon'sHub Reseller API product
     ch_key = getattr(product, "cupponshub_product_id", None)
     if ch_key:
+        has_supplier = True
         try:
             from app.services.cupponshub import cupponshub_client
             if cupponshub_client.is_configured():
-                return await cupponshub_client.get_stock(str(ch_key).strip(), force_refresh=force_refresh)
+                supplier_stock = await cupponshub_client.get_stock(str(ch_key).strip(), force_refresh=force_refresh)
         except Exception as exc:
             logger.warning(f"Error fetching Cuppon'sHub live stock for #{product.id}: {exc}")
-            return 0
 
     # 3. LootPaglu mapped product
-    try:
-        from app.services.loot_paglu import is_paglu_product, live_stock
-        if is_paglu_product(product.id, product):
-            from app.db import repo
-            local = await repo.available_stock_count(session, product.id)
-            return await live_stock(product.id, local, product=product)
-    except Exception:
-        pass
+    elif getattr(product, "paglu_service_id", None):
+        has_supplier = True
+        try:
+            from app.services.loot_paglu import loot_paglu_client
+            sid = str(product.paglu_service_id).strip()
+            if loot_paglu_client.is_configured():
+                supplier_stock = await loot_paglu_client.stock(sid, force_refresh=force_refresh)
+        except Exception as exc:
+            logger.warning(f"Error fetching LootPaglu live stock for #{product.id}: {exc}")
 
-    # 3. Non-stock enabled or manual delivery items
-    if not getattr(product, "stock_enabled", True) or getattr(product, "delivery_mode", "instant") == "manual":
+    # 4. VenteBot Reseller API product
+    else:
+        v_id = get_ventebot_target_id(product)
+        if v_id:
+            has_supplier = True
+            try:
+                if ventebot_client.is_configured():
+                    supplier_stock = await ventebot_client.get_stock(v_id, force_refresh=force_refresh)
+            except Exception as exc:
+                logger.warning(f"Error fetching VenteBot live stock for #{product.id}: {exc}")
+
+    # If linked to a supplier, total available = local stock + supplier stock
+    if has_supplier:
+        return local_stock + max(0, int(supplier_stock or 0))
+
+    # If local stock exists, return local stock count
+    if local_stock > 0:
+        return local_stock
+
+    # Pure Manual or Reusable static delivery item (only when explicitly set with delivery content or manual mode)
+    if getattr(product, "delivery_mode", "instant") == "manual":
+        return 999
+    if not getattr(product, "stock_enabled", True) and bool(getattr(product, "delivery", "") and str(product.delivery).strip()):
         return 999
 
-    # 3. Local inventory from database
-    try:
-        from app.db import repo
-        local = await repo.available_stock_count(session, product.id)
-        return max(0, int(local))
-    except Exception as exc:
-        logger.warning(f"Error getting local stock count for #{product.id}: {exc}")
-        return 0
+    # Standard unlinked product with 0 stock items
+    return 0

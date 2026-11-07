@@ -150,8 +150,11 @@ class CupponsHubClient:
             if isinstance(p, dict):
                 k = str(p.get("key") or "").strip()
                 if k:
-                    stock = p.get("stock")
-                    new_map[k] = 0 if stock is None else max(0, int(stock))
+                    try:
+                        raw_stock = p.get("stock")
+                        new_map[k] = 0 if raw_stock is None else max(0, int(raw_stock))
+                    except (ValueError, TypeError):
+                        new_map[k] = 0
         self._stock_map = new_map
 
     async def get_all_stock_map(self, force_refresh: bool = False) -> dict[str, int]:

@@ -125,6 +125,10 @@ def admin_main_dashboard_kb(hide_oos: bool = False) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🛒 Cuppon Catalog", callback_data="admin_nav:cupponlist"),
             ],
             [
+                InlineKeyboardButton(text="⚡ Smart Auto-Link All", callback_data="admin_nav:autolink"),
+                InlineKeyboardButton(text="🌐 All Suppliers Status", callback_data="admin_nav:suppliers"),
+            ],
+            [
                 InlineKeyboardButton(text="🚫 Blocked Users", callback_data="admin_nav:blockedusers"),
                 InlineKeyboardButton(text="📢 Broadcast to Users", callback_data="admin_nav:broadcast"),
             ],
@@ -278,6 +282,9 @@ async def admin(message: Message):
         "/paglulink PRIMEHUB_ID SERVICE_ID - Connect product manually\n"
         "/pagluunlink [PRIMEHUB_ID] - Disconnect Paglu bot\n"
         "/paglutest - Test Paglu API connectivity & wallet balance\n\n"
+        "⚡ <b>Unified Supplier Management:</b>\n"
+        "/autolink - Automatically connect all products to live suppliers with stock\n"
+        "/suppliers - Health & connection overview of Cuppon, Paglu & Vente\n\n"
         "🛒 <b>Cuppon'sHub Bot Integration (@Cupponbot):</b>\n"
         "/cupponstatus - Overview of all products & live Cuppon stock\n"
         "/cupponlist [search] - Browse Cuppon products, keys & rates\n"
@@ -625,6 +632,305 @@ async def cb_admin_nav_cupponlist(call: CallbackQuery):
         await call.message.answer("\n".join(lines), parse_mode="HTML")
     except Exception as exc:
         await call.message.answer(f"❌ Error fetching catalogue: <code>{exc}</code>", parse_mode="HTML")
+
+
+async def perform_autolink(session: AsyncSession) -> tuple[int, list[str]]:
+    """Automatically maps unlinked or disconnected products to active suppliers with stock."""
+    from app.services.cupponshub import cupponshub_client
+    from app.services.loot_paglu import loot_paglu_client
+
+    cuppon_prods = await cupponshub_client.get_products(force_refresh=True) if cupponshub_client.is_configured() else []
+    paglu_prods = await loot_paglu_client.products(force_refresh=True) if loot_paglu_client.is_configured() else []
+
+    cuppon_by_key = {str(p.get("key", "")).strip().lower(): p for p in cuppon_prods if isinstance(p, dict) and p.get("key")}
+    paglu_by_id = {str(s.get("service_id", "")).strip().lower(): s for s in paglu_prods if isinstance(s, dict) and s.get("service_id")}
+
+    all_products = await repo.list_products(session, only_active=False)
+    linked_count = 0
+    logs = []
+
+    # Rules: (keywords, cuppon_keys, paglu_ids)
+    catalog_rules = [
+        (["gemini", "google one", "google ai"], ["gemini_plus_12m_links", "gemini_plus_6_months"], []),
+        (["apple music"], ["apple_music_5m"], ["paglu_2"]),
+        (["adobe express", "adobe"], ["adobe_express_12_month"], ["paglu_3"]),
+        (["spotify"], ["spotify_3m_reedem_link"], []),
+        (["notion"], ["notion_plus_12m", "notion_business_3m_coupon"], ["paglu_12"]),
+        (["office 365", "microsoft 365", "m365", "ms office"], ["microsoft_office_365_plus_1_year", "microsoft_office_ltsc_professional_plus_2024_key_global"], []),
+        (["windows 11", "win 11", "windows 10"], ["windows_11_pro_retail_key_global"], []),
+        (["canva"], ["canva_pro_1_month_team_invite", "canva_pro_admin_500_invitations"], []),
+        (["chatgpt", "chat gpt", "openai", "codex"], ["chatgpt_plus_1_month", "api_chatgpt_codex_10m_token_1_day", "chatgpt_go_3_months"], []),
+        (["claude"], ["api_claude_10m_token_1_day", "api_claude_50m_token_2_day"], []),
+        (["nord vpn", "nordvpn"], ["nord_vpn_3m_account"], []),
+        (["surfshark"], ["surfshark_vpn_2m"], []),
+        (["ilovepdf"], ["ilovepdf_premium_1y"], []),
+        (["coursera"], ["coursera_premium_12_months"], []),
+        (["duolingo"], ["duolingo_super_12m"], ["paglu_1"]),
+        (["udemy"], ["udemy_personal_plan_1m"], []),
+        (["edx"], ["edx_premium_12months"], []),
+        (["capcut"], ["capcut_pro_1_month_fw", "capcut_pro_7d_500_crd_fw"], []),
+        (["figma"], ["figma_pro_edu_2yrs"], []),
+        (["meesho"], [], ["paglu_8"]),
+        (["hotmail"], ["hotmail_trust_private"], []),
+        (["outlook"], ["outlook_mail_trust_private"], []),
+        (["icloud"], ["icloud_mail_account_no_api_only_web"], []),
+    ]
+
+    for prod in all_products:
+        name_lower = str(prod.name).lower()
+
+        # Check if already linked and working with stock
+        has_active_link = False
+        if prod.cupponshub_product_id:
+            c_info = cuppon_by_key.get(str(prod.cupponshub_product_id).strip().lower())
+            if c_info and int(c_info.get("stock") or 0) > 0:
+                has_active_link = True
+        elif prod.paglu_service_id:
+            p_info = paglu_by_id.get(str(prod.paglu_service_id).strip().lower())
+            if p_info and int(p_info.get("available_stock") or 0) > 0:
+                has_active_link = True
+
+        if has_active_link:
+            continue
+
+        matched = False
+        for keywords, cuppon_keys, paglu_ids in catalog_rules:
+            if any(kw in name_lower for kw in keywords):
+                chosen_cuppon = None
+                for ckey in cuppon_keys:
+                    c_info = cuppon_by_key.get(ckey.lower())
+                    if c_info and int(c_info.get("stock") or 0) > 0:
+                        chosen_cuppon = c_info
+                        break
+
+                chosen_paglu = None
+                for psid in paglu_ids:
+                    p_info = paglu_by_id.get(psid.lower())
+                    if p_info and int(p_info.get("available_stock") or 0) > 0:
+                        chosen_paglu = p_info
+                        break
+
+                if chosen_cuppon and chosen_paglu:
+                    c_stk = int(chosen_cuppon.get("stock") or 0)
+                    p_stk = int(chosen_paglu.get("available_stock") or 0)
+                    if p_stk >= c_stk:
+                        prod.paglu_service_id = chosen_paglu.get("service_id")
+                        prod.cupponshub_product_id = None
+                        prod.ventebot_product_id = None
+                        logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🤖 Paglu: <code>{prod.paglu_service_id}</code> ({p_stk} stock)")
+                    else:
+                        prod.cupponshub_product_id = chosen_cuppon.get("key")
+                        prod.paglu_service_id = None
+                        prod.ventebot_product_id = None
+                        logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🛒 Cuppon'sHub: <code>{prod.cupponshub_product_id}</code> ({c_stk} stock)")
+                    linked_count += 1
+                    matched = True
+                    break
+                elif chosen_cuppon:
+                    c_stk = int(chosen_cuppon.get("stock") or 0)
+                    prod.cupponshub_product_id = chosen_cuppon.get("key")
+                    prod.paglu_service_id = None
+                    prod.ventebot_product_id = None
+                    logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🛒 Cuppon'sHub: <code>{prod.cupponshub_product_id}</code> ({c_stk} stock)")
+                    linked_count += 1
+                    matched = True
+                    break
+                elif chosen_paglu:
+                    p_stk = int(chosen_paglu.get("available_stock") or 0)
+                    prod.paglu_service_id = chosen_paglu.get("service_id")
+                    prod.cupponshub_product_id = None
+                    prod.ventebot_product_id = None
+                    logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🤖 Paglu: <code>{prod.paglu_service_id}</code> ({p_stk} stock)")
+                    linked_count += 1
+                    matched = True
+                    break
+                elif cuppon_keys:
+                    prod.cupponshub_product_id = cuppon_keys[0]
+                    prod.paglu_service_id = None
+                    prod.ventebot_product_id = None
+                    logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🛒 Cuppon'sHub: <code>{prod.cupponshub_product_id}</code>")
+                    linked_count += 1
+                    matched = True
+                    break
+
+        if matched:
+            prod.stock_enabled = False
+            prod.delivery_mode = "instant"
+
+    await session.commit()
+    return linked_count, logs
+
+
+async def render_suppliers_dashboard(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
+    """Build unified status card for all suppliers and product links."""
+    from app.services.cupponshub import cupponshub_client
+    from app.services.loot_paglu import loot_paglu_client
+    from app.services.ventebot import ventebot_client
+    from app.handlers.user import product_stock_map
+
+    # 1. Cuppon'sHub status
+    cuppon_online = False
+    cuppon_prods_count = 0
+    cuppon_bal = 0.0
+    if cupponshub_client.is_configured():
+        try:
+            cuppon_bal = await cupponshub_client.get_balance()
+            c_prods = await cupponshub_client.get_products()
+            cuppon_prods_count = len(c_prods)
+            cuppon_online = True
+        except Exception:
+            pass
+
+    # 2. LootPaglu status
+    paglu_online = False
+    paglu_services_count = 0
+    paglu_bal_str = "N/A"
+    if loot_paglu_client.is_configured():
+        try:
+            p_wallet = await loot_paglu_client.me()
+            paglu_bal_str = str(p_wallet.get("formatted_balance") or p_wallet.get("balance") or "Active")
+            p_prods = await loot_paglu_client.products()
+            paglu_services_count = len(p_prods)
+            paglu_online = True
+        except Exception:
+            pass
+
+    # 3. VenteBot status
+    vente_online = False
+    vente_prods_count = 0
+    if ventebot_client.is_configured():
+        try:
+            v_prods = await ventebot_client.get_products()
+            vente_prods_count = len(v_prods)
+            vente_online = True
+        except Exception:
+            pass
+
+    products = await repo.list_products(session, only_active=False)
+    stock_map = await product_stock_map(session, products)
+
+    c_linked = sum(1 for p in products if p.cupponshub_product_id)
+    p_linked = sum(1 for p in products if p.paglu_service_id)
+    v_linked = sum(1 for p in products if p.ventebot_product_id)
+    unlinked = sum(1 for p in products if not p.cupponshub_product_id and not p.paglu_service_id and not p.ventebot_product_id)
+
+    c_status = f"🟢 Online ({cuppon_prods_count} items | ${cuppon_bal:.2f} USDT)" if cuppon_online else "🔴 Offline / API key not set"
+    p_status = f"🟢 Online ({paglu_services_count} services | {paglu_bal_str})" if paglu_online else "🔴 Offline / API key not set"
+    v_status = f"🟢 Online ({vente_prods_count} products)" if vente_online else "🟡 Server 404 / Key not set"
+
+    lines = [
+        "🌐 <b>All Supplier Bots — Real-time Status</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"🛒 <b>Cuppon'sHub (@Cupponbot):</b> {c_status}",
+        f"   ↳ Linked in Store: <b>{c_linked} product(s)</b>",
+        f"🤖 <b>LootPaglu:</b> {p_status}",
+        f"   ↳ Linked in Store: <b>{p_linked} product(s)</b>",
+        f"🌐 <b>VenteBot:</b> {v_status}",
+        f"   ↳ Linked in Store: <b>{v_linked} product(s)</b>",
+        f"📦 <b>Unlinked / Local:</b> <b>{unlinked} product(s)</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📋 <b>Current Store Connections & Live Stock:</b>",
+    ]
+
+    for p in products:
+        total_stk = stock_map.get(p.id, 0)
+        stk_badge = f"🟢 {total_stk}" if total_stk > 0 else "🔴 0"
+        if p.cupponshub_product_id:
+            lines.append(f"• <b>#{p.id} {escape(p.name)}</b>\n  ↳ 🛒 Cuppon: <code>{p.cupponshub_product_id}</code> | Stock: {stk_badge}")
+        elif p.paglu_service_id:
+            lines.append(f"• <b>#{p.id} {escape(p.name)}</b>\n  ↳ 🤖 Paglu: <code>{p.paglu_service_id}</code> | Stock: {stk_badge}")
+        elif p.ventebot_product_id:
+            lines.append(f"• <b>#{p.id} {escape(p.name)}</b>\n  ↳ 🌐 Vente: <code>#{p.ventebot_product_id}</code> | Stock: {stk_badge}")
+        else:
+            local_cnt = await repo.available_stock_count(session, p.id)
+            if local_cnt > 0:
+                lines.append(f"• <b>#{p.id} {escape(p.name)}</b>\n  ↳ 🏠 Local Stock: {local_cnt} units")
+            elif getattr(p, "delivery_mode", "instant") == "manual" or (not p.stock_enabled and bool(p.delivery and p.delivery.strip())):
+                lines.append(f"• <b>#{p.id} {escape(p.name)}</b>\n  ↳ ♾ Reusable / Manual")
+            else:
+                lines.append(f"• <b>#{p.id} {escape(p.name)}</b>\n  ↳ ⚠️ Unlinked (🔴 OUT OF STOCK)")
+
+    lines.append("\n💡 <i>Tap 'Smart Auto-Link All' below to automatically connect unlinked items!</i>")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚡ Smart Auto-Link All", callback_data="admin_nav:autolink"),
+            InlineKeyboardButton(text="🔄 Refresh Status", callback_data="admin_nav:suppliers"),
+        ],
+        [
+            InlineKeyboardButton(text="🛒 Cuppon Catalog", callback_data="admin_nav:cupponlist"),
+            InlineKeyboardButton(text="🤖 Paglu Services", callback_data="admin_nav:paglustatus"),
+        ],
+        [
+            InlineKeyboardButton(text="📦 Products Catalog", callback_data="admin_nav:products"),
+            InlineKeyboardButton(text="« Admin Menu", callback_data="admin_nav:main"),
+        ],
+    ])
+
+    return "\n".join(lines), kb
+
+
+@router.message(Command("autolink", "smartlink"))
+async def autolink_cmd(message: Message):
+    if not admin_only(message):
+        return
+    await message.answer("⏳ <i>Scanning store products and mapping to active suppliers with stock...</i>", parse_mode="HTML")
+    async with SessionLocal() as session:
+        linked_count, logs = await perform_autolink(session)
+    if linked_count > 0:
+        res = f"🎉 <b>Successfully Auto-Linked {linked_count} Product(s)!</b>\n\n" + "\n".join(logs)
+        await message.answer(res, parse_mode="HTML")
+    else:
+        await message.answer("✅ <b>Scan Complete!</b>\nAll products are already connected to active suppliers or have local stock.", parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:autolink")
+async def cb_admin_nav_autolink(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer("Auto-linking products...")
+    await call.message.answer("⏳ <i>Scanning store products and mapping to active suppliers with stock...</i>", parse_mode="HTML")
+    async with SessionLocal() as session:
+        linked_count, logs = await perform_autolink(session)
+    if linked_count > 0:
+        res = f"🎉 <b>Successfully Auto-Linked {linked_count} Product(s)!</b>\n\n" + "\n".join(logs)
+        await call.message.answer(res, parse_mode="HTML")
+    else:
+        await call.message.answer("✅ <b>Scan Complete!</b>\nAll products are already connected to active suppliers or have local stock.", parse_mode="HTML")
+
+
+@router.message(Command("suppliers", "supplierstatus"))
+async def suppliers_cmd(message: Message):
+    if not admin_only(message):
+        return
+    await message.answer("⏳ <i>Querying live supplier bots...</i>", parse_mode="HTML")
+    async with SessionLocal() as session:
+        text, kb = await render_suppliers_dashboard(session)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:suppliers")
+async def cb_admin_nav_suppliers(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer("Fetching supplier status...")
+    async with SessionLocal() as session:
+        text, kb = await render_suppliers_dashboard(session)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await call.message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_nav:products")
+async def cb_admin_nav_products(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Not authorized.", show_alert=True)
+        return
+    await call.answer()
+    await admin_products(call.message)
 
 
 @router.callback_query(F.data == "admin_nav:broadcast")
@@ -1082,6 +1388,7 @@ async def paglu_unlink_command(message: Message):
                 await message.answer(f"❌ Product #{pid} not found.")
                 return
             product.paglu_service_id = None
+            product.stock_enabled = True
             set_product_paglu_service(pid, None)
             await session.commit()
             p_name = product.name
@@ -1305,6 +1612,22 @@ async def list_products(message: Message):
         except Exception:
             pass
 
+        cuppon_stock_map: dict[str, int] = {}
+        try:
+            from app.services.cupponshub import cupponshub_client
+            if cupponshub_client.is_configured():
+                cuppon_stock_map = await cupponshub_client.get_all_stock_map()
+        except Exception:
+            pass
+
+        paglu_stock_map: dict[str, int] = {}
+        try:
+            from app.services.loot_paglu import loot_paglu_client
+            if loot_paglu_client.is_configured():
+                paglu_stock_map = await loot_paglu_client.get_all_stock_map()
+        except Exception:
+            pass
+
         if not products:
             await message.answer("No products yet.")
             return
@@ -1313,22 +1636,31 @@ async def list_products(message: Message):
         for p in products:
             status = "🟢" if p.active else "🔴"
             image = "🖼️" if p.image_file_id else "—"
-            if p.ventebot_product_id:
-                v_stock = vente_stock_map.get(int(p.ventebot_product_id), 0)
-                stk_str = f"🟢 Stock: {v_stock}" if v_stock > 0 else "🔴 Stock: 0 (Supplier)"
+            local_stk = await repo.available_stock_count(session, p.id)
+
+            if getattr(p, "cupponshub_product_id", None):
+                ch_key = str(p.cupponshub_product_id).strip()
+                ch_stk = cuppon_stock_map.get(ch_key, 0)
+                tot_stk = local_stk + ch_stk
+                stk_str = f"🟢 Total: {tot_stk} (Cuppon: {ch_stk} + Own: {local_stk})" if tot_stk > 0 else "🔴 Stock: 0 (Cuppon)"
+                link_info = f"🛒 Cuppon <code>{ch_key}</code> ({stk_str})"
+            elif getattr(p, "paglu_service_id", None):
+                sid = str(p.paglu_service_id).strip().lower()
+                p_stk = paglu_stock_map.get(sid, 0)
+                tot_stk = local_stk + p_stk
+                stk_str = f"🟢 Total: {tot_stk} (Paglu: {p_stk} + Own: {local_stk})" if tot_stk > 0 else "🔴 Stock: 0 (Paglu)"
+                link_info = f"🤖 Paglu <code>{p.paglu_service_id}</code> ({stk_str})"
+            elif getattr(p, "ventebot_product_id", None):
+                v_stk = vente_stock_map.get(int(p.ventebot_product_id), 0)
+                tot_stk = local_stk + v_stk
+                stk_str = f"🟢 Total: {tot_stk} (Vente: {v_stk} + Own: {local_stk})" if tot_stk > 0 else "🔴 Stock: 0 (Vente)"
                 link_info = f"🔗 Vente #{p.ventebot_product_id} ({stk_str})"
-            elif not p.stock_enabled or p.delivery_mode == "manual":
+            elif local_stk > 0:
+                link_info = f"🏠 Local Stock: 🟢 {local_stk} units"
+            elif getattr(p, "delivery_mode", "instant") == "manual" or (not p.stock_enabled and bool(p.delivery and p.delivery.strip())):
                 link_info = "♾ Reusable / Manual"
             else:
-                local_stk = await repo.available_stock_count(session, p.id)
-                from app.services.loot_paglu import is_paglu_product, live_stock
-                if is_paglu_product(p.id, p):
-                    total_stk = await live_stock(p.id, local_stk, product=p)
-                    paglu_stk = max(0, total_stk - local_stk)
-                    link_info = f"🤖 Paglu (Own: {local_stk} + Paglu: {paglu_stk} = {total_stk})"
-                else:
-                    stk_str = f"🟢 Stock: {local_stk}" if local_stk > 0 else "🔴 OUT OF STOCK"
-                    link_info = f"⚠️ Unlinked ({stk_str})"
+                link_info = "⚠️ Unlinked (🔴 OUT OF STOCK)"
 
             lines.append(
                 f"<b>#{p.id}</b> {status} | {image} | <b>{escape(p.name)}</b>\n"
@@ -1336,11 +1668,11 @@ async def list_products(message: Message):
             )
 
         lines.append("\n💡 <b>Helpful Commands:</b>")
-        lines.append("• <code>/ventestatus</code> — Live VenteBot link status")
-        lines.append("• <code>/paglustatus</code> — Paglu Smart Fallback status")
-        lines.append("• <code>/pagluunlink</code> — Disconnect Paglu bot")
-        lines.append("• <code>/ventelink PRIMEHUB_ID VENTE_ID</code> — Link product to supplier")
-        lines.append("• <code>/editproduct PRIMEHUB_ID</code> — Edit price/details")
+        lines.append("• <code>/autolink</code> — ⚡ Automatically link all products to best live supplier")
+        lines.append("• <code>/suppliers</code> — Overview of all suppliers & product connections")
+        lines.append("• <code>/cupponlink PRIMEHUB_ID CUPPON_KEY</code> — Link to Cuppon'sHub")
+        lines.append("• <code>/paglulink PRIMEHUB_ID SERVICE_ID</code> — Link to LootPaglu")
+        lines.append("• <code>/ventelink PRIMEHUB_ID VENTE_ID</code> — Link to VenteBot")
 
     full_text = "\n".join(lines)
     if len(full_text) <= 4000:
@@ -2735,6 +3067,7 @@ async def vente_unlink_command(message: Message):
             await message.answer(f"Product #{primehub_id} not found.")
             return
         product.ventebot_product_id = None
+        product.stock_enabled = True
         await session.commit()
     await message.answer(f"✅ Product #{primehub_id} ({product.name}) unlinked from VenteBot.")
 
@@ -3065,6 +3398,7 @@ async def cuppon_unlink_command(message: Message):
             await message.answer(f"❌ Product #{primehub_id} not found.")
             return
         product.cupponshub_product_id = None
+        product.stock_enabled = True
         await session.commit()
     await message.answer(f"✅ Product #{primehub_id} (<b>{escape(product.name)}</b>) unlinked from Cuppon'sHub.", parse_mode="HTML")
 
