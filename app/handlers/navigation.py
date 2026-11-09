@@ -107,8 +107,8 @@ async def start_command(message: Message, state: FSMContext) -> None:
                 product = products[0]
 
             if product:
-                local_stock = await repo.available_stock_count(session, product.id)
-                available_stock = await live_stock(product.id, local_stock)
+                from app.handlers.user import product_available_stock
+                available_stock = await product_available_stock(session, product)
 
         if product:
             safe_name = escape(product.name or "Gemini AI Pro 18 Months")
@@ -282,9 +282,17 @@ async def menu_command(message: Message, state: FSMContext) -> None:
 async def shop_command(message: Message, state: FSMContext) -> None:
     await state.clear()
     await _register_user(message)
+    from app.handlers.user import product_stock_map
     async with SessionLocal() as session:
         categories = await repo.list_categories(session)
-        stock_totals, all_stock = await repo.category_stock_totals(session)
+        all_prods = await repo.list_products(session, only_active=True)
+        stock_counts = await product_stock_map(session, all_prods)
+        stock_totals: dict[str, int] = {}
+        all_stock = 0
+        for p in all_prods:
+            stk = max(0, int(stock_counts.get(p.id, 0)))
+            stock_totals[p.category] = max(0, int(stock_totals.get(p.category, 0)) + stk)
+            all_stock += stk
     if not categories:
         await message.answer("No products are available yet.", reply_markup=main_menu_kb())
         return

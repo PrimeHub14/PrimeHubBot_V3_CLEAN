@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     EKQR_BASE_URL: str = "https://api.ekqr.in"
 
     # VenteBot Reseller API integration
-    VENTEBOT_BASE_URL: str = "https://ventetelegrambotrailway-production.up.railway.app"
+    VENTEBOT_BASE_URL: str = "https://web-production-1c7b1.up.railway.app"
     VENTEBOT_API_KEY: str = ""
     VENTEBOT_PRODUCT_ID: int = 0
     VENTEBOT_SERVICE_ID: int = 0

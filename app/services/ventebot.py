@@ -55,7 +55,7 @@ class VenteBotClient:
 
     @property
     def base_url(self) -> str:
-        url = self._base_url_override or getattr(settings, "VENTEBOT_BASE_URL", "") or "https://ventetelegrambotrailway-production.up.railway.app"
+        url = self._base_url_override or getattr(settings, "VENTEBOT_BASE_URL", "") or "https://web-production-1c7b1.up.railway.app"
         return url.rstrip("/")
 
     def set_base_url(self, url: str) -> None:

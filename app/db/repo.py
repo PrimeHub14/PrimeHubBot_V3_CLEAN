@@ -69,20 +69,33 @@ async def list_categories(session: AsyncSession) -> list[str]:
 
 async def category_stock_totals(session: AsyncSession) -> tuple[dict[str, int], int]:
     """Return live available stock totals for each active category and all products."""
-    stmt = (
-        select(Product.category, func.count(StockItem.id))
-        .select_from(Product)
-        .outerjoin(
-            StockItem,
-            (StockItem.product_id == Product.id) & (StockItem.status == "available"),
+    try:
+        from app.handlers.user import product_stock_map
+        products = await list_products(session, only_active=True)
+        stock_counts = await product_stock_map(session, products)
+        totals: dict[str, int] = {}
+        all_stock = 0
+        for p in products:
+            if p.category and str(p.category) != "Vente Services":
+                stk = max(0, int(stock_counts.get(p.id, 0)))
+                totals[p.category] = max(0, int(totals.get(p.category, 0)) + stk)
+                all_stock += stk
+        return totals, all_stock
+    except Exception:
+        stmt = (
+            select(Product.category, func.count(StockItem.id))
+            .select_from(Product)
+            .outerjoin(
+                StockItem,
+                (StockItem.product_id == Product.id) & (StockItem.status == "available"),
+            )
+            .where(Product.active.is_(True), Product.category != "Vente Services")
+            .group_by(Product.category)
+            .order_by(Product.category)
         )
-        .where(Product.active.is_(True), Product.category != "Vente Services")
-        .group_by(Product.category)
-        .order_by(Product.category)
-    )
-    rows = (await session.execute(stmt)).all()
-    totals = {str(category): int(count or 0) for category, count in rows if category and str(category) != "Vente Services"}
-    return totals, sum(totals.values())
+        rows = (await session.execute(stmt)).all()
+        totals = {str(category): int(count or 0) for category, count in rows if category and str(category) != "Vente Services"}
+        return totals, sum(totals.values())
 
 
 async def list_products_by_category(session: AsyncSession, category: str) -> list[Product]:
