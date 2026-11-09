@@ -43,24 +43,44 @@ def get_ventebot_target_id(product) -> int | None:
 
 class VenteBotClient:
     def __init__(self) -> None:
-        self.base_url = (getattr(settings, "VENTEBOT_BASE_URL", "") or "https://ventetelegrambotrailway-production.up.railway.app").rstrip("/")
+        self._base_url_override: str | None = None
+        self._api_key_override: str | None = None
         self.timeout = aiohttp.ClientTimeout(total=getattr(settings, "VENTEBOT_TIMEOUT_SECONDS", 15))
         self._cached_products: list[dict[str, Any]] = []
         self._cache_time: float = 0.0
         self._etag: str = ""
         self._stock_map: dict[int, int] = {}
         self._lock = asyncio.Lock()
+        self._last_error: str = ""
+
+    @property
+    def base_url(self) -> str:
+        url = self._base_url_override or getattr(settings, "VENTEBOT_BASE_URL", "") or "https://ventetelegrambotrailway-production.up.railway.app"
+        return url.rstrip("/")
+
+    def set_base_url(self, url: str) -> None:
+        self._base_url_override = str(url).strip().rstrip("/")
+        self._cached_products = []
+        self._cache_time = 0.0
 
     @property
     def api_key(self) -> str:
-        return (getattr(settings, "VENTEBOT_API_KEY", "") or "").strip()
+        key = self._api_key_override or getattr(settings, "VENTEBOT_API_KEY", "") or ""
+        return key.strip()
+
+    def set_api_key(self, key: str) -> None:
+        self._api_key_override = str(key).strip()
+
+    @property
+    def last_error(self) -> str:
+        return self._last_error
 
     def is_configured(self) -> bool:
         return bool(self.api_key)
 
     def _headers(self, bypass_etag: bool = False) -> dict[str, str]:
         if not self.api_key:
-            raise VenteBotError("VenteBot Reseller API key is not configured. Please set VENTEBOT_API_KEY in Railway.")
+            raise VenteBotError("VenteBot Reseller API key is not configured. Please set VENTEBOT_API_KEY in Railway or via /ventesetkey.")
         headers = {
             "X-Reseller-Key": self.api_key,
             "X-API-Key": self.api_key,
@@ -100,25 +120,32 @@ class VenteBotClient:
 
                     if response.status >= 400:
                         detail = data.get("detail") or data.get("message") or data.get("error") or f"HTTP {response.status}"
-                        raise VenteBotError(str(detail))
+                        err_msg = f"{detail} (HTTP {response.status} at {url})"
+                        self._last_error = err_msg
+                        raise VenteBotError(err_msg)
 
                     new_etag = response.headers.get("ETag")
                     if new_etag:
                         self._etag = new_etag
 
+                    self._last_error = ""
                     return data
         except VenteBotError:
             raise
         except (aiohttp.ClientError, TimeoutError) as exc:
-            raise VenteBotError(f"VenteBot API connection error: {exc}") from exc
+            err_msg = f"VenteBot API connection error: {exc} (at {url})"
+            self._last_error = err_msg
+            raise VenteBotError(err_msg) from exc
 
     async def me(self) -> dict[str, Any]:
         """Fetch reseller account profile and live USD wallet balance."""
         return await self._request("GET", "/api/reseller/me")
 
-    async def get_products(self, force_refresh: bool = False) -> list[dict[str, Any]]:
+    async def get_products(self, force_refresh: bool = False, raise_for_error: bool = False) -> list[dict[str, Any]]:
         """Fetch all products with live stock from VenteBot (cached for TTL seconds)."""
         if not self.is_configured():
+            if raise_for_error:
+                raise VenteBotError("VenteBot API key is not configured. Set VENTEBOT_API_KEY in Railway or via /ventesetkey.")
             return []
 
         cache_ttl = getattr(settings, "VENTEBOT_CACHE_SECONDS", 60)
@@ -142,8 +169,12 @@ class VenteBotClient:
                         self._cached_products = products
                         self._cache_time = time.time()
                 self._update_stock_map()
+                self._last_error = ""
             except Exception as exc:
+                self._last_error = str(exc)
                 logger.warning(f"Failed to fetch VenteBot products ({exc}), using cached snapshot if available.")
+                if raise_for_error:
+                    raise
                 if not self._cached_products:
                     return []
 

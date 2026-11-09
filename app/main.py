@@ -44,6 +44,21 @@ async def start_bot() -> None:
     except Exception as exc:
         logging.exception(f"Error during database initialization: {exc}")
 
+    # Load dynamic supplier overrides persisted in database
+    try:
+        from app.db.session import SessionLocal
+        from app.db import repo
+        from app.services.ventebot import ventebot_client
+        async with SessionLocal() as session:
+            db_v_url = await repo.get_setting(session, "ventebot_base_url")
+            if db_v_url:
+                ventebot_client.set_base_url(db_v_url)
+            db_v_key = await repo.get_setting(session, "ventebot_api_key")
+            if db_v_key:
+                ventebot_client.set_api_key(db_v_key)
+    except Exception as exc:
+        logging.warning(f"Could not load dynamic settings on startup: {exc}")
+
     bot = Bot(settings.BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 

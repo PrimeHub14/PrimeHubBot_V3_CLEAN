@@ -267,14 +267,17 @@ async def admin(message: Message):
         "/ticketsadmin - Open support tickets\n"
         "/replyticket ID MESSAGE - Reply to a ticket\n\n"
         "🌐 <b>VenteBot Integration:</b>\n"
-        "/venterecheck ORDER_ID - Check status & auto-deliver pending activation order\n"
-        "/ventestatus - Overview of all products & live link status\n"
         "/ventelist [search] - Browse & search VenteBot products\n"
-        "/ventefile - Download full catalogue as .txt file\n"
         "/venteinfo ID - View item details & supplier stock\n"
         "/ventelink PRIMEHUB_ID VENTE_ID - Connect product\n"
         "/venteunlink PRIMEHUB_ID - Unlink product\n"
-        "/venteme - Check VenteBot balance & status\n\n"
+        "/venteme - Check VenteBot balance & status\n"
+        "/ventetest - Run live connection & latency diagnostic\n"
+        "/venteseturl URL - Update VenteBot API URL\n"
+        "/ventesetkey KEY - Update VenteBot API Key\n"
+        "/venterecheck ORDER_ID - Check status & auto-deliver pending activation order\n"
+        "/ventestatus - Overview of all products & live link status\n"
+        "/ventefile - Download full catalogue as .txt file\n\n"
         "🤖 <b>Paglu Shop Bot Integration:</b>\n"
         "/paglustatus - Smart Fallback status & all linked products\n"
         "/paglulist - Browse all Paglu services, stock & wholesale rates\n"
@@ -816,7 +819,15 @@ async def render_suppliers_dashboard(session: AsyncSession) -> tuple[str, Inline
 
     c_status = f"🟢 Online ({cuppon_prods_count} items | ${cuppon_bal:.2f} USDT)" if cuppon_online else "🔴 Offline / API key not set"
     p_status = f"🟢 Online ({paglu_services_count} services | {paglu_bal_str})" if paglu_online else "🔴 Offline / API key not set"
-    v_status = f"🟢 Online ({vente_prods_count} products)" if vente_online else "🟡 Server 404 / Key not set"
+    v_err = ventebot_client.last_error
+    if vente_online:
+        v_status = f"🟢 Online ({vente_prods_count} products)"
+    elif not ventebot_client.is_configured():
+        v_status = "🔴 Key not set (use /ventesetkey)"
+    elif v_err and "404" in v_err:
+        v_status = "🔴 Railway 404: App Not Found (use /venteseturl)"
+    else:
+        v_status = f"🔴 Offline: {v_err[:40]}" if v_err else "🔴 Server Unreachable"
 
     lines = [
         "🌐 <b>All Supplier Bots — Real-time Status</b>",
@@ -2809,22 +2820,151 @@ async def vente_status_command(message: Message):
             await message.answer(chunk, parse_mode="HTML")
 
 
+@router.message(Command("venteseturl", "ventebaseurl"))
+async def vente_set_url_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.ventebot import ventebot_client
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip().startswith(("http://", "https://")):
+        await message.answer(
+            f"ℹ️ <b>VenteBot Base URL Manager</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Current URL:</b> <code>{escape(ventebot_client.base_url)}</code>\n\n"
+            f"<b>To change:</b> <code>/venteseturl NEW_BASE_URL</code>\n"
+            f"<b>Example:</b> <code>/venteseturl https://my-vente-bot.up.railway.app</code>\n\n"
+            f"<i>Setting this updates the URL instantly and saves it to the database.</i>",
+            parse_mode="HTML",
+        )
+        return
+    new_url = parts[1].strip().rstrip("/")
+    ventebot_client.set_base_url(new_url)
+    async with SessionLocal() as session:
+        await repo.set_setting(session, "ventebot_base_url", new_url)
+
+    ping_status = "Connecting..."
+    try:
+        data = await ventebot_client.me()
+        bal = data.get("wallet_balance", 0.0)
+        ping_status = f"✅ Connected! Reseller Balance: ${float(bal):.2f} USD"
+    except Exception as exc:
+        ping_status = f"⚠️ URL updated, but connection check returned: <code>{escape(str(exc))}</code>"
+
+    await message.answer(
+        f"🌐 <b>VenteBot Base URL Updated</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>New Endpoint:</b> <code>{escape(new_url)}</code>\n"
+        f"• <b>Status:</b> {ping_status}\n\n"
+        f"<i>Run <code>/ventetest</code> to inspect full connectivity or <code>/ventelist</code> to browse products.</i>",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("ventesetkey"))
+async def vente_set_key_command(message: Message):
+    if not admin_only(message):
+        return
+    from app.services.ventebot import ventebot_client
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        curr_status = "Set (Configured)" if ventebot_client.is_configured() else "Not Set"
+        await message.answer(
+            f"ℹ️ <b>VenteBot API Key Manager</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Status:</b> {curr_status}\n\n"
+            f"<b>Usage:</b> <code>/ventesetkey YOUR_API_KEY</code>",
+            parse_mode="HTML",
+        )
+        return
+    new_key = parts[1].strip()
+    ventebot_client.set_api_key(new_key)
+    async with SessionLocal() as session:
+        await repo.set_setting(session, "ventebot_api_key", new_key)
+    await message.answer(
+        f"🔑 <b>VenteBot API Key Updated</b>\n\n"
+        f"Key registered ({len(new_key)} chars). Run <code>/ventetest</code> to verify account connectivity.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("ventetest", "venteping"))
+async def vente_test_command(message: Message):
+    if not admin_only(message):
+        return
+    import time
+    from app.services.ventebot import ventebot_client
+    url = ventebot_client.base_url
+    has_key = bool(ventebot_client.api_key)
+    masked_key = (ventebot_client.api_key[:6] + "..." + ventebot_client.api_key[-4:]) if len(ventebot_client.api_key) > 10 else ("Configured" if has_key else "Missing")
+
+    msg = await message.answer(f"🔍 <b>Testing VenteBot API...</b>\n\nTarget: <code>{escape(url)}</code>", parse_mode="HTML")
+    try:
+        t0 = time.time()
+        me_data = await ventebot_client.me()
+        elapsed = int((time.time() - t0) * 1000)
+        bal = me_data.get("wallet_balance", 0.0)
+        user_tg = me_data.get("user_telegram_id") or "N/A"
+        prods = await ventebot_client.get_products(force_refresh=True, raise_for_error=True)
+        await msg.edit_text(
+            "✅ <b>VenteBot Diagnostic: 100% HEALTHY</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🌐 Endpoint: <code>{escape(url)}</code>\n"
+            f"⚡ Latency: <b>{elapsed} ms</b>\n"
+            f"🔑 API Key: <code>{masked_key}</code>\n"
+            f"👤 Reseller ID: <code>{user_tg}</code>\n"
+            f"💰 Wallet Balance: <b>${float(bal):.2f} USD</b>\n"
+            f"📦 Live Products: <b>{len(prods)} items available</b>\n\n"
+            "🎉 <i>Connection is active and ready for live linking and order delivery!</i>",
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        err_str = str(exc)
+        cause = "Server is not responding or unreachable."
+        if "404" in err_str:
+            cause = "The Railway deployment is offline, expired, or the domain has changed."
+        elif "401" in err_str or "403" in err_str:
+            cause = "The API key is invalid, expired, or missing permissions."
+        elif "timeout" in err_str.lower():
+            cause = "Network connection timed out reaching the server."
+
+        await msg.edit_text(
+            "❌ <b>VenteBot Diagnostic: CONNECTION FAILED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🌐 <b>Endpoint:</b> <code>{escape(url)}</code>\n"
+            f"🔑 <b>API Key:</b> <code>{masked_key}</code>\n"
+            f"⚠️ <b>Error:</b> <code>{escape(err_str)}</code>\n\n"
+            f"💡 <b>Root Cause:</b> {cause}\n\n"
+            "🔧 <b>How to fix:</b>\n"
+            "1. If VenteBot was redeployed to a new URL: <code>/venteseturl NEW_URL</code>\n"
+            "2. If you need to update the API key: <code>/ventesetkey NEW_KEY</code>\n"
+            "3. Check your Railway dashboard to confirm the VenteBot service is running.\n\n"
+            "🛒 <i>Tip: Cuppon'sHub (@Cupponbot) is online with 54 products ready! Use <code>/cupponlist</code>.</i>",
+            parse_mode="HTML",
+        )
+
+
 @router.message(Command("ventelist"))
 async def vente_list_command(message: Message):
     if not admin_only(message):
         return
     from app.services.ventebot import ventebot_client
     if not ventebot_client.is_configured():
-        await message.answer("⚠️ Set <code>VENTEBOT_API_KEY</code> in Railway first.", parse_mode="HTML")
+        await message.answer(
+            "⚠️ <b>VenteBot API Key is missing.</b>\n\n"
+            "Set it via <code>/ventesetkey YOUR_KEY</code> or via Railway variable <code>VENTEBOT_API_KEY</code>.",
+            parse_mode="HTML",
+        )
         return
 
     parts = (message.text or "").split(maxsplit=1)
     query = parts[1].strip() if len(parts) > 1 else ""
 
     try:
-        products = await ventebot_client.get_products(force_refresh=True)
+        products = await ventebot_client.get_products(force_refresh=True, raise_for_error=True)
         if not products:
-            await message.answer("No products returned from VenteBot.")
+            await message.answer(
+                f"ℹ️ VenteBot returned 0 products.\n\n"
+                f"Endpoint: <code>{escape(ventebot_client.base_url)}</code>\n"
+                f"Check <code>/ventetest</code> to test connection.",
+                parse_mode="HTML",
+            )
             return
 
         if query and query.lower() not in {"all", "file", "export"}:
@@ -2870,7 +3010,18 @@ async def vente_list_command(message: Message):
         text, kb = format_vente_page(products, page=1)
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
     except Exception as exc:
-        await message.answer(f"❌ Error fetching VenteBot catalogue: <code>{exc}</code>", parse_mode="HTML")
+        await message.answer(
+            f"❌ <b>Could not load VenteBot catalogue:</b> <code>{escape(str(exc))}</code>\n\n"
+            f"🌐 <b>Current URL:</b> <code>{escape(ventebot_client.base_url)}</code>\n\n"
+            f"💡 <b>Why this happened:</b> The VenteBot Railway server returned <code>404 Not Found (Application not found)</code>.\n"
+            f"This means the Railway deployment hosting VenteBot is offline, expired, or has a new URL.\n\n"
+            f"🔧 <b>Fix options:</b>\n"
+            f"• <code>/venteseturl NEW_URL</code> — Update VenteBot API URL\n"
+            f"• <code>/ventesetkey NEW_KEY</code> — Update VenteBot API Key\n"
+            f"• <code>/ventetest</code> — Run live connection test\n\n"
+            f"🛒 <i>Tip: Cuppon'sHub (@Cupponbot) is online with 54 products ready! Use <code>/cupponlist</code>.</i>",
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data.startswith("ventepage:"))
