@@ -773,13 +773,6 @@ async def perform_autolink(session: AsyncSession) -> tuple[int, list[str]]:
     await session.commit()
     return linked_count, logs
 
-        if matched:
-            prod.stock_enabled = False
-            prod.delivery_mode = "instant"
-
-    await session.commit()
-    return linked_count, logs
-
 
 async def render_suppliers_dashboard(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
     """Build unified status card for all suppliers and product links."""
