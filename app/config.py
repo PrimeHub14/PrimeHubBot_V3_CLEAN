@@ -61,7 +61,7 @@ class Settings(BaseSettings):
 
     # VenteBot Reseller API integration
     VENTEBOT_BASE_URL: str = "https://web-production-1c7b1.up.railway.app"
-    VENTEBOT_API_KEY: str = ""
+    VENTEBOT_API_KEY: str = "vbr_live_9c2b868baf_7J8vPSHrTYzYK0pLfBU76_v7v2rC3muyp87ApiYcomU"
     VENTEBOT_PRODUCT_ID: int = 0
     VENTEBOT_SERVICE_ID: int = 0
     VENTEBOT_TIMEOUT_SECONDS: int = 15

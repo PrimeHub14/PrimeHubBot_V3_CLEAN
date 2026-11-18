@@ -225,6 +225,7 @@ async def admin(message: Message):
         "/order ORDER_ID - Inspect order details & customer info\n"
         "/deliver ORDER_ID - Instant delivery of any order\n"
         "/delivermanual ORDER_ID [text] - Send custom credentials\n"
+        f"/setupi UPI_ID - Update receiving UPI ID (Current: <code>{escape(settings.UPI_ID)}</code>)\n"
         "/stats - Store sales & user statistics\n"
         "/reports - Sales reports by date range\n"
         "/solddata - Exact sold-item ledger & CSV export\n\n"
@@ -467,6 +468,7 @@ async def cb_admin_nav_main(call: CallbackQuery):
         "/order ORDER_ID - Inspect order details & customer info\n"
         "/deliver ORDER_ID - Instant delivery of any order\n"
         "/delivermanual ORDER_ID [text] - Send custom credentials\n"
+        f"/setupi UPI_ID - Update receiving UPI ID (Current: <code>{escape(settings.UPI_ID)}</code>)\n"
         "/stats - Store sales & user statistics\n"
         "/reports - Sales reports by date range\n"
         "/solddata - Exact sold-item ledger & CSV export\n\n"
@@ -641,42 +643,53 @@ async def perform_autolink(session: AsyncSession) -> tuple[int, list[str]]:
     """Automatically maps unlinked or disconnected products to active suppliers with stock."""
     from app.services.cupponshub import cupponshub_client
     from app.services.loot_paglu import loot_paglu_client
+    from app.services.ventebot import ventebot_client
 
     cuppon_prods = await cupponshub_client.get_products(force_refresh=True) if cupponshub_client.is_configured() else []
     paglu_prods = await loot_paglu_client.products(force_refresh=True) if loot_paglu_client.is_configured() else []
+    vente_prods = await ventebot_client.get_products(force_refresh=True) if ventebot_client.is_configured() else []
 
     cuppon_by_key = {str(p.get("key", "")).strip().lower(): p for p in cuppon_prods if isinstance(p, dict) and p.get("key")}
     paglu_by_id = {str(s.get("service_id", "")).strip().lower(): s for s in paglu_prods if isinstance(s, dict) and s.get("service_id")}
+    vente_by_id = {int(p.get("id")): p for p in vente_prods if isinstance(p, dict) and p.get("id")}
 
     all_products = await repo.list_products(session, only_active=False)
     linked_count = 0
     logs = []
 
-    # Rules: (keywords, cuppon_keys, paglu_ids)
+    # Rules: (keywords, cuppon_keys, paglu_ids, vente_ids)
     catalog_rules = [
-        (["gemini", "google one", "google ai"], ["gemini_plus_12m_links", "gemini_plus_6_months"], []),
-        (["apple music"], ["apple_music_5m"], ["paglu_2"]),
-        (["adobe express", "adobe"], ["adobe_express_12_month"], ["paglu_3"]),
-        (["spotify"], ["spotify_3m_reedem_link"], []),
-        (["notion"], ["notion_plus_12m", "notion_business_3m_coupon"], ["paglu_12"]),
-        (["office 365", "microsoft 365", "m365", "ms office"], ["microsoft_office_365_plus_1_year", "microsoft_office_ltsc_professional_plus_2024_key_global"], []),
-        (["windows 11", "win 11", "windows 10"], ["windows_11_pro_retail_key_global"], []),
-        (["canva"], ["canva_pro_1_month_team_invite", "canva_pro_admin_500_invitations"], []),
-        (["chatgpt", "chat gpt", "openai", "codex"], ["chatgpt_plus_1_month", "api_chatgpt_codex_10m_token_1_day", "chatgpt_go_3_months"], []),
-        (["claude"], ["api_claude_10m_token_1_day", "api_claude_50m_token_2_day"], []),
-        (["nord vpn", "nordvpn"], ["nord_vpn_3m_account"], []),
-        (["surfshark"], ["surfshark_vpn_2m"], []),
-        (["ilovepdf"], ["ilovepdf_premium_1y"], []),
-        (["coursera"], ["coursera_premium_12_months"], []),
-        (["duolingo"], ["duolingo_super_12m"], ["paglu_1"]),
-        (["udemy"], ["udemy_personal_plan_1m"], []),
-        (["edx"], ["edx_premium_12months"], []),
-        (["capcut"], ["capcut_pro_1_month_fw", "capcut_pro_7d_500_crd_fw"], []),
-        (["figma"], ["figma_pro_edu_2yrs"], []),
-        (["meesho"], [], ["paglu_8"]),
-        (["hotmail"], ["hotmail_trust_private"], []),
-        (["outlook"], ["outlook_mail_trust_private"], []),
-        (["icloud"], ["icloud_mail_account_no_api_only_web"], []),
+        (["gemini", "google one", "google ai"], ["gemini_plus_12m_links", "gemini_plus_6_months"], [], [121, 117]),
+        (["apple music"], ["apple_music_5m"], ["paglu_2"], []),
+        (["adobe express", "adobe"], ["adobe_express_12_month"], ["paglu_3"], []),
+        (["spotify"], ["spotify_3m_reedem_link"], [], []),
+        (["notion"], ["notion_plus_12m", "notion_business_3m_coupon"], ["paglu_12"], []),
+        (["office 365", "microsoft 365", "m365", "ms office"], ["microsoft_office_365_plus_1_year", "microsoft_office_ltsc_professional_plus_2024_key_global"], [], []),
+        (["windows 11", "win 11", "windows 10"], ["windows_11_pro_retail_key_global"], [], []),
+        (["canva"], ["canva_pro_1_month_team_invite", "canva_pro_admin_500_invitations"], [], []),
+        (["chatgpt", "chat gpt", "openai", "codex"], ["chatgpt_plus_1_month", "api_chatgpt_codex_10m_token_1_day", "chatgpt_go_3_months"], [], []),
+        (["claude"], ["api_claude_10m_token_1_day", "api_claude_50m_token_2_day"], [], []),
+        (["nord vpn", "nordvpn"], ["nord_vpn_3m_account"], [], []),
+        (["surfshark"], ["surfshark_vpn_2m"], [], []),
+        (["ilovepdf"], ["ilovepdf_premium_1y"], [], []),
+        (["coursera"], ["coursera_premium_12_months"], [], []),
+        (["duolingo"], ["duolingo_super_12m"], ["paglu_1"], []),
+        (["udemy"], ["udemy_personal_plan_1m"], [], []),
+        (["edx"], ["edx_premium_12months"], [], []),
+        (["capcut"], ["capcut_pro_1_month_fw", "capcut_pro_7d_500_crd_fw"], [], []),
+        (["figma"], ["figma_pro_edu_2yrs"], [], []),
+        (["meesho"], [], ["paglu_8"], []),
+        (["hotmail"], ["hotmail_trust_private"], [], []),
+        (["outlook"], ["outlook_mail_trust_private"], [], []),
+        (["icloud"], ["icloud_mail_account_no_api_only_web"], [], []),
+        (["elevenlabs", "eleven labs"], [], [], [2]),
+        (["elevenreader", "eleven reader"], ["elevenreader_ultra_12_months"], [], [119]),
+        (["lovable"], [], [], [4]),
+        (["replit"], [], [], [5]),
+        (["framer"], [], [], [7]),
+        (["granola"], [], [], [8]),
+        (["linear"], [], [], [10]),
+        (["picsart"], [], [], [118]),
     ]
 
     for prod in all_products:
@@ -692,69 +705,73 @@ async def perform_autolink(session: AsyncSession) -> tuple[int, list[str]]:
             p_info = paglu_by_id.get(str(prod.paglu_service_id).strip().lower())
             if p_info and int(p_info.get("available_stock") or 0) > 0:
                 has_active_link = True
+        elif prod.ventebot_product_id:
+            v_info = vente_by_id.get(int(prod.ventebot_product_id))
+            if v_info and int(v_info.get("stock") or 0) > 0:
+                has_active_link = True
 
         if has_active_link:
             continue
 
         matched = False
-        for keywords, cuppon_keys, paglu_ids in catalog_rules:
+        for item in catalog_rules:
+            keywords = item[0]
+            cuppon_keys = item[1]
+            paglu_ids = item[2]
+            vente_ids = item[3] if len(item) > 3 else []
+
             if any(kw in name_lower for kw in keywords):
-                chosen_cuppon = None
+                candidates = []
+
                 for ckey in cuppon_keys:
                     c_info = cuppon_by_key.get(ckey.lower())
                     if c_info and int(c_info.get("stock") or 0) > 0:
-                        chosen_cuppon = c_info
+                        candidates.append(("cuppon", c_info.get("key"), int(c_info.get("stock") or 0)))
                         break
 
-                chosen_paglu = None
                 for psid in paglu_ids:
                     p_info = paglu_by_id.get(psid.lower())
                     if p_info and int(p_info.get("available_stock") or 0) > 0:
-                        chosen_paglu = p_info
+                        candidates.append(("paglu", p_info.get("service_id"), int(p_info.get("available_stock") or 0)))
                         break
 
-                if chosen_cuppon and chosen_paglu:
-                    c_stk = int(chosen_cuppon.get("stock") or 0)
-                    p_stk = int(chosen_paglu.get("available_stock") or 0)
-                    if p_stk >= c_stk:
-                        prod.paglu_service_id = chosen_paglu.get("service_id")
-                        prod.cupponshub_product_id = None
-                        prod.ventebot_product_id = None
-                        logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🤖 Paglu: <code>{prod.paglu_service_id}</code> ({p_stk} stock)")
-                    else:
-                        prod.cupponshub_product_id = chosen_cuppon.get("key")
+                for vid in vente_ids:
+                    v_info = vente_by_id.get(int(vid))
+                    if v_info and int(v_info.get("stock") or 0) > 0:
+                        candidates.append(("vente", int(v_info.get("id")), int(v_info.get("stock") or 0)))
+                        break
+
+                if candidates:
+                    # Pick supplier with highest live stock
+                    candidates.sort(key=lambda x: x[2], reverse=True)
+                    best_supplier, best_id, best_stock = candidates[0]
+
+                    if best_supplier == "cuppon":
+                        prod.cupponshub_product_id = best_id
                         prod.paglu_service_id = None
                         prod.ventebot_product_id = None
-                        logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🛒 Cuppon'sHub: <code>{prod.cupponshub_product_id}</code> ({c_stk} stock)")
+                        logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🛒 Cuppon'sHub: <code>{best_id}</code> ({best_stock} stock)")
+                    elif best_supplier == "paglu":
+                        prod.paglu_service_id = best_id
+                        prod.cupponshub_product_id = None
+                        prod.ventebot_product_id = None
+                        logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🤖 Paglu: <code>{best_id}</code> ({best_stock} stock)")
+                    elif best_supplier == "vente":
+                        prod.ventebot_product_id = best_id
+                        prod.cupponshub_product_id = None
+                        prod.paglu_service_id = None
+                        logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🌐 VenteBot: <code>#{best_id}</code> ({best_stock} stock)")
+
                     linked_count += 1
                     matched = True
                     break
-                elif chosen_cuppon:
-                    c_stk = int(chosen_cuppon.get("stock") or 0)
-                    prod.cupponshub_product_id = chosen_cuppon.get("key")
-                    prod.paglu_service_id = None
-                    prod.ventebot_product_id = None
-                    logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🛒 Cuppon'sHub: <code>{prod.cupponshub_product_id}</code> ({c_stk} stock)")
-                    linked_count += 1
-                    matched = True
-                    break
-                elif chosen_paglu:
-                    p_stk = int(chosen_paglu.get("available_stock") or 0)
-                    prod.paglu_service_id = chosen_paglu.get("service_id")
-                    prod.cupponshub_product_id = None
-                    prod.ventebot_product_id = None
-                    logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🤖 Paglu: <code>{prod.paglu_service_id}</code> ({p_stk} stock)")
-                    linked_count += 1
-                    matched = True
-                    break
-                elif cuppon_keys:
-                    prod.cupponshub_product_id = cuppon_keys[0]
-                    prod.paglu_service_id = None
-                    prod.ventebot_product_id = None
-                    logs.append(f"• <b>#{prod.id} {escape(prod.name)}</b> ➔ 🛒 Cuppon'sHub: <code>{prod.cupponshub_product_id}</code>")
-                    linked_count += 1
-                    matched = True
-                    break
+
+        if matched:
+            prod.stock_enabled = False
+            prod.delivery_mode = "instant"
+
+    await session.commit()
+    return linked_count, logs
 
         if matched:
             prod.stock_enabled = False
@@ -2880,6 +2897,34 @@ async def vente_set_key_command(message: Message):
     await message.answer(
         f"🔑 <b>VenteBot API Key Updated</b>\n\n"
         f"Key registered ({len(new_key)} chars). Run <code>/ventetest</code> to verify account connectivity.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("setupi", "set_upi", "changeupi"))
+async def set_upi_command(message: Message):
+    if not admin_only(message):
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            f"ℹ️ <b>UPI Payment ID Manager</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Current UPI ID:</b> <code>{escape(settings.UPI_ID)}</code>\n\n"
+            f"<b>To change:</b> <code>/setupi NEW_UPI_ID</code>\n"
+            f"<b>Example:</b> <code>/setupi Q05299307@ybl</code>\n\n"
+            f"<i>Updates immediately and saves to bot database permanently.</i>",
+            parse_mode="HTML",
+        )
+        return
+    new_upi = parts[1].strip()
+    settings.UPI_ID = new_upi
+    async with SessionLocal() as session:
+        await repo.set_setting(session, "upi_id", new_upi)
+    await message.answer(
+        f"✅ <b>UPI Payment ID Updated Successfully</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>New UPI ID:</b> <code>{escape(new_upi)}</code>\n"
+        f"• <b>Payee Name:</b> <code>{escape(settings.UPI_NAME)}</code>\n\n"
+        f"<i>All customers checking out via UPI or topping up wallet will now pay to this new UPI ID immediately!</i>",
         parse_mode="HTML",
     )
 

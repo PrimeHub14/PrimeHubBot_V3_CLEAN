@@ -56,6 +56,9 @@ async def start_bot() -> None:
             db_v_key = await repo.get_setting(session, "ventebot_api_key")
             if db_v_key:
                 ventebot_client.set_api_key(db_v_key)
+            db_upi = await repo.get_setting(session, "upi_id")
+            if db_upi:
+                settings.UPI_ID = db_upi
     except Exception as exc:
         logging.warning(f"Could not load dynamic settings on startup: {exc}")
 
